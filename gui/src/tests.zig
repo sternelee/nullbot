@@ -100,13 +100,18 @@ test "the config page draws its own controls" {
 
     // nanoterm-style page: a heading, a runtime card and one section per
     // group. The raw JSON editor is folded away until it is asked for.
+    //
+    // The sections are the settings worth a control: what answers, where it
+    // works, which servers it may call, and whether it runs on a schedule.
+    // The rest of config.json stays in the advanced fold.
     try testing.expect(w.tester.hasText("Configuration"));
     try testing.expect(w.tester.hasText("Built-in nullclaw runtime"));
     try testing.expect(w.tester.hasText("Provider"));
-    try testing.expect(w.tester.hasText("Gateway"));
-    try testing.expect(w.tester.hasText("Agent"));
-    try testing.expect(w.tester.hasText("Memory"));
-    try testing.expect(w.tester.hasText("Reliability"));
+    try testing.expect(w.tester.hasText("Workspace"));
+    try testing.expect(w.tester.hasText("MCP servers"));
+    try testing.expect(w.tester.hasText("Cron"));
+    try testing.expect(w.tester.hasText("Skills"));
+    try testing.expect(w.tester.hasText("Capabilities"));
     try testing.expect(w.tester.containsText("Reload"));
     try testing.expect(w.tester.containsText("Save & restart"));
     try testing.expect(w.tester.containsText("model.primary"));
@@ -403,6 +408,110 @@ test "the diagnostics panel names what the window is connected to" {
     try testing.expect(w.tester.containsText("s1"));
     // The theme it is drawn in, so a screenshot can be traced to a palette.
     try testing.expect(w.tester.containsText("Matrix"));
+}
+
+// Regression: six icon names in the view were not in nanoui's table
+// (`square.and.arrow.down`, `hexagon.fill`, `tray`, …), so they drew as
+// missing-glyph boxes — the Save button read "d Save & restart". This walks
+// the source and fails on any name the toolkit cannot draw.
+test "every icon the view names exists in the toolkit" {
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const icons_src = try std.Io.Dir.cwd().readFileAlloc(io, "zig-pkg/nanoui-0.13.0-we0KMd1-MQBzJq1VU59oWYKF3KHhSYPj8_qjVe2icq_e/src/ui/icons.zig", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(icons_src);
+
+    const view_src = try std.Io.Dir.cwd().readFileAlloc(io, "src/view.zig", testing.allocator, .limited(1 << 20));
+    defer testing.allocator.free(view_src);
+
+    // Every `.name = "x"` in the table is a name the toolkit can draw.
+    var known: std.StringHashMapUnmanaged(void) = .empty;
+    defer {
+        var it = known.keyIterator();
+        while (it.next()) |k| testing.allocator.free(k.*);
+        known.deinit(testing.allocator);
+    }
+    var at: usize = 0;
+    while (std.mem.indexOfPos(u8, icons_src, at, ".name = \"")) |i| {
+        const start = i + ".name = \"".len;
+        const end = std.mem.indexOfScalarPos(u8, icons_src, start, '"') orelse break;
+        const name = try testing.allocator.dupe(u8, icons_src[start..end]);
+        known.put(testing.allocator, name, {}) catch testing.allocator.free(name);
+        at = end;
+    }
+    try testing.expect(known.count() > 20);
+
+    // Every icon the view names has to be one of them.
+    var checked: usize = 0;
+    var pos: usize = 0;
+    while (pos < view_src.len) {
+        const hit = std.mem.indexOfPos(u8, view_src, pos, "icon") orelse break;
+        pos = hit + 4;
+        // `icon(c, "name"` or `.icon = "name"`.
+        var q = pos;
+        while (q < view_src.len and view_src[q] != '"' and q - pos < 24) q += 1;
+        if (q >= view_src.len or view_src[q] != '"') continue;
+        const start = q + 1;
+        const end = std.mem.indexOfScalarPos(u8, view_src, start, '"') orelse break;
+        const name = view_src[start..end];
+        if (name.len == 0 or std.mem.indexOfScalar(u8, name, ' ') != null) continue;
+        pos = end;
+        if (std.mem.eql(u8, name, "")) continue;
+        checked += 1;
+        if (!known.contains(name)) {
+            std.debug.print("icon `{s}` is not in the toolkit\n", .{name});
+            return error.UnknownIcon;
+        }
+    }
+    try testing.expect(checked > 10);
+}
+
+// The page is an editor, not a viewer: what the form holds has to reach the
+// file. This drives the form the way a person would — set the fields, Apply,
+// Save — and then reads the file back off disk.
+test "the config form writes what it was given to the file" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var path_buffer: [256]u8 = undefined;
+    const stub = try harness.writeStub(io, &path_buffer);
+    _ = try harness.writeConfig(io,
+        \\{"agents":{"defaults":{"model":{"primary":"openrouter/stub-model"}}}}
+    );
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{ .runtime = stub });
+    defer w.deinit();
+
+    w.app.openPage(.config);
+    w.settle(2);
+    try testing.expect(w.app.config != null);
+
+    // The form, as a person would fill it.
+    w.app.cfg_default_model.set("glm-4.6");
+    w.app.cfg_workspace.set("/tmp/scratch-workspace");
+    w.app.cfg_cron_enabled = true;
+    w.app.cfg_cron_interval.set("15");
+    w.app.cfg_mcp_servers.set("filesystem npx -y server-filesystem\ngit mcp-server-git");
+
+    w.app.applyConfigForm();
+    w.app.saveConfig();
+    w.settle(2);
+
+    // Read the file back: the form's values are in it.
+    const written = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(written);
+
+    try testing.expect(std.mem.indexOf(u8, written, "openrouter/glm-4.6") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "/tmp/scratch-workspace") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"enabled\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"interval_minutes\": 15") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "mcp_servers") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "mcp-server-git") != null);
+
+    // And the document the page holds agrees with the file.
+    try testing.expectEqualStrings("openrouter/glm-4.6", w.app.config.?.get("agents.defaults.model.primary").?);
+    try testing.expectEqualStrings("/tmp/scratch-workspace", w.app.config.?.get("workspace").?);
 }
 
 // Regression: `gotConfig` loaded the file but never handed it to the tree, so

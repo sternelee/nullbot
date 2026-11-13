@@ -74,6 +74,14 @@ test "screenshots" {
     w.settle(1);
     try shoot(&w, "03-config");
 
+    // The same page in a window tall enough for every section, so the lower
+    // half of the form can be looked at without scrolling.
+    w.tester.resize(1180, 1500);
+    w.tester.settle(0.5);
+    try shoot(&w, "10-config-full");
+    w.tester.resize(1180, 800);
+    w.tester.settle(0.5);
+
     // A capability page, answered by the runtime itself.
     w.app.openPage(.models);
     w.settle(1);

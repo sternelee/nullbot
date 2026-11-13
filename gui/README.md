@@ -40,13 +40,14 @@ the app runs:
 | --- | --- |
 | `01-chat-empty.png` | A new conversation, with the opening suggestions |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
-| `03-config.png` | The configuration page: runtime card, Provider/Gateway/Agent/Memory/Reliability sections, advanced fold |
+| `03-config.png` | The configuration page: runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The same page with every key opened |
 | `06-complaint.png` | The same page when the runtime answers nothing: its complaint is on the page |
 | `07-diagnostics.png` | The diagnostics panel over the chat: runtime, paths, session, theme |
 | `08-capabilities.png` | Capabilities as a list: channels, memory engines and tools, each with its state |
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
+| `10-config-full.png` | The configuration page in a tall window, so every section is visible at once |
 
 The shots are taken through the same path the app uses — a runtime answering
 from a process, and a config file on disk — rather than by handing the pages

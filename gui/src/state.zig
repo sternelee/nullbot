@@ -163,7 +163,17 @@ const Request = struct {
     state: *AppState,
     kind: Kind,
 
-    const Kind = enum { sessions, transcript, invoke, page, config_load, config_save };
+    const Kind = enum { sessions, transcript, invoke, page, config_load, config_save, config_summary };
+};
+
+/// The counts the configuration page shows for Capabilities, read from the
+/// page that actually runs the command.
+pub const CapsSummary = struct {
+    channels_configured: usize,
+    channels_total: usize,
+    memory_active: usize,
+    memory_total: usize,
+    tools: usize,
 };
 
 pub const AppState = struct {
@@ -230,7 +240,23 @@ pub const AppState = struct {
     /// to wait between tries.
     cfg_retries: ui.TextBuffer = .{},
     cfg_backoff_ms: ui.TextBuffer = .{},
+    /// Workspace: the directory the agent may read and write.
+    cfg_workspace: ui.TextBuffer = .{},
+    /// Cron: whether scheduled tasks run, and how often the scheduler ticks.
+    cfg_cron_enabled: bool = false,
+    cfg_cron_interval: ui.TextBuffer = .{},
+    /// MCP: the servers the agent can call, one `name command` per line.
+    cfg_mcp_servers: ui.TextBuffer = .{},
     show_advanced_config: bool = false,
+
+    /// What the Skills and Capabilities pages last read, so the configuration
+    /// page can summarise them without running the commands again. Null until
+    /// those pages have been opened.
+    skills_count: ?usize = null,
+    caps_summary: ?CapsSummary = null,
+    summary_running: bool = false,
+    /// How many of the summary commands are still in flight.
+    summary_pending: u8 = 0,
 
     /// Built-in runtime managed by the GUI.
     daemon: runtime.Daemon,
@@ -300,6 +326,9 @@ pub const AppState = struct {
         self.cfg_autonomy_level.deinit();
         self.cfg_retries.deinit();
         self.cfg_backoff_ms.deinit();
+        self.cfg_workspace.deinit();
+        self.cfg_cron_interval.deinit();
+        self.cfg_mcp_servers.deinit();
         self.clearJson();
         self.clearExpanded();
         self.json_expanded.deinit(self.gpa);
@@ -408,6 +437,7 @@ pub const AppState = struct {
             .page => self.gotPage(result),
             .config_load => self.gotConfig(result),
             .config_save => self.gotConfigSaved(result),
+            .config_summary => self.gotConfigSummary(result),
         }
     }
 
@@ -701,6 +731,34 @@ pub const AppState = struct {
         self.rebuildRows();
     }
 
+    /// The counts the configuration page shows, taken from the groups the
+    /// Capabilities page built.
+    fn summariseCaps(rows: *const backend.Rows) CapsSummary {
+        var out = CapsSummary{
+            .channels_configured = 0,
+            .channels_total = 0,
+            .memory_active = 0,
+            .memory_total = 0,
+            .tools = 0,
+        };
+        for (rows.groups.items) |g| {
+            if (std.mem.eql(u8, g.title, "Channels")) {
+                out.channels_total = g.rows.items.len;
+                for (g.rows.items) |r| {
+                    if (r.state == .on) out.channels_configured += 1;
+                }
+            } else if (std.mem.eql(u8, g.title, "Memory engines")) {
+                out.memory_total = g.rows.items.len;
+                for (g.rows.items) |r| {
+                    if (r.state == .on) out.memory_active += 1;
+                }
+            } else if (std.mem.eql(u8, g.title, "Tools")) {
+                out.tools = g.rows.items.len;
+            }
+        }
+        return out;
+    }
+
     /// Reads the answer as list rows when the page has a reader for it. A
     /// reader that cannot make sense of the document leaves `problem` set and
     /// the page falls back to the tree, so nothing is lost.
@@ -726,6 +784,13 @@ pub const AppState = struct {
             var dropped = built;
             dropped.deinit();
             return;
+        }
+        // The configuration page summarises these two, so what this page just
+        // read is kept for it rather than run again.
+        switch (self.page) {
+            .skills => self.skills_count = built.totalRows(),
+            .capabilities => self.caps_summary = summariseCaps(&built),
+            else => {},
         }
         self.rows = built;
     }
@@ -815,6 +880,41 @@ pub const AppState = struct {
         // that view is merged, and saving it would drop the defaults it added.
         self.showConfigDoc();
         if (!result.ok) self.blame(result);
+        self.loadConfigSummary();
+    }
+
+    /// Reads the two things the configuration page only summarises: the
+    /// installed skills and the build's capabilities. Both are runtime state
+    /// rather than config keys, so the page asks rather than reading the file.
+    fn loadConfigSummary(self: *AppState) void {
+        if (self.summary_running) return;
+        self.summary_running = true;
+        self.summary_pending = 2;
+        self.submit(&.{ "capabilities", "--json" }, "capabilities", .config_summary);
+        self.submit(&.{ "skills", "list", "--json" }, "skills", .config_summary);
+    }
+
+    fn gotConfigSummary(self: *AppState, result: runtime.Result) void {
+        // Two commands answer into this one kind; the flag clears when both
+        // are in, so a third open does not queue behind a half-finished pair.
+        if (self.summary_pending > 0) self.summary_pending -= 1;
+        if (self.summary_pending == 0) self.summary_running = false;
+        if (!result.ok) return;
+
+        // Which command this is, by what it returned: capabilities has
+        // `channels`, skills is a bare list.
+        var rows = if (std.mem.indexOf(u8, result.stdout, "\"channels\"") != null)
+            backend.readCapabilities(self.gpa, result.stdout)
+        else
+            backend.readRecordList(self.gpa, result.stdout, "Skills");
+        defer rows.deinit();
+        if (rows.problem != null) return;
+
+        if (std.mem.indexOf(u8, result.stdout, "\"channels\"") != null) {
+            self.caps_summary = summariseCaps(&rows);
+        } else {
+            self.skills_count = rows.totalRows();
+        }
     }
 
     fn setBuf(buf: *ui.TextBuffer, text: []const u8) void {
@@ -933,6 +1033,38 @@ pub const AppState = struct {
 
         setBuf(&self.cfg_retries, doc.get("reliability.provider_retries") orelse "2");
         setBuf(&self.cfg_backoff_ms, doc.get("reliability.provider_backoff_ms") orelse "500");
+
+        setBuf(&self.cfg_workspace, doc.get("workspace") orelse self.paths.workspace);
+        self.cfg_cron_enabled = std.ascii.eqlIgnoreCase(doc.get("cron.enabled") orelse "false", "true");
+        setBuf(&self.cfg_cron_interval, doc.get("cron.interval_minutes") orelse "30");
+        self.syncMcpFromConfig(doc);
+    }
+
+    /// MCP servers are objects, not a string, so the form shows them one per
+    /// line as `name command` and reads them back the same way.
+    fn syncMcpFromConfig(self: *AppState, doc: *backend.ConfigDoc) void {
+        const servers = doc.objectAt("mcp_servers") orelse {
+            self.cfg_mcp_servers.clear();
+            return;
+        };
+        var buf: std.ArrayListUnmanaged(u8) = .empty;
+        defer buf.deinit(self.gpa);
+        var it = servers.iterator();
+        while (it.next()) |entry| {
+            const rec = switch (entry.value_ptr.*) {
+                .object => |o| o,
+                else => continue,
+            };
+            const command = switch (rec.get("command") orelse continue) {
+                .string => |v| v,
+                else => continue,
+            };
+            if (buf.items.len > 0) buf.append(self.gpa, '\n') catch return;
+            buf.appendSlice(self.gpa, entry.key_ptr.*) catch return;
+            buf.append(self.gpa, ' ') catch return;
+            buf.appendSlice(self.gpa, command) catch return;
+        }
+        self.cfg_mcp_servers.set(buf.items);
     }
 
     /// Applies the common config form fields into the loaded document.
@@ -1113,7 +1245,71 @@ pub const AppState = struct {
                 changed = true;
             }
         }
+
+        // Workspace: a path the agent may read and write.
+        const workspace = std.mem.trim(u8, self.cfg_workspace.text(), " \t\r\n");
+        if (workspace.len > 0) {
+            const now = doc.get("workspace") orelse "";
+            if (!std.mem.eql(u8, now, workspace)) {
+                doc.setString("workspace", workspace) catch {};
+                changed = true;
+            }
+        }
+
+        // Cron: on or off, and how often the scheduler wakes.
+        const cron_now = std.ascii.eqlIgnoreCase(doc.get("cron.enabled") orelse "false", "true");
+        if (cron_now != self.cfg_cron_enabled) {
+            doc.setBool("cron.enabled", self.cfg_cron_enabled) catch {};
+            changed = true;
+        }
+        const interval = std.mem.trim(u8, self.cfg_cron_interval.text(), " \t\r\n");
+        if (interval.len > 0) {
+            const now = doc.get("cron.interval_minutes") orelse "";
+            if (!std.mem.eql(u8, now, interval)) {
+                doc.setAuto("cron.interval_minutes", interval) catch {};
+                changed = true;
+            }
+        }
+
+        changed = self.applyMcpServers(doc) or changed;
         return changed;
+    }
+
+    /// Writes the MCP list back as `mcp_servers` objects. A line is
+    /// `name command`; a server already in the file keeps its other keys
+    /// (transport, args, env), so editing the list does not drop them.
+    fn applyMcpServers(self: *AppState, doc: *backend.ConfigDoc) bool {
+        const text = std.mem.trim(u8, self.cfg_mcp_servers.text(), " \t\r\n");
+        const existing = doc.objectAt("mcp_servers");
+        const before = if (existing) |o| o.count() else 0;
+
+        var parsed: usize = 0;
+        var it = std.mem.splitScalar(u8, text, '\n');
+        while (it.next()) |raw| {
+            const line = std.mem.trim(u8, raw, " \t\r");
+            if (line.len == 0) continue;
+            const space = std.mem.indexOfScalar(u8, line, ' ') orelse continue;
+            const name = std.mem.trim(u8, line[0..space], " \t");
+            const command = std.mem.trim(u8, line[space + 1 ..], " \t");
+            if (name.len == 0 or command.len == 0) continue;
+            parsed += 1;
+
+            var path_buf: [256]u8 = undefined;
+            const cmd_path = std.fmt.bufPrint(&path_buf, "mcp_servers.{s}.command", .{name}) catch continue;
+            const now = doc.get(cmd_path);
+            if (now) |v| {
+                if (std.mem.eql(u8, v, command)) continue;
+            }
+            doc.setString(cmd_path, command) catch continue;
+            // A new server needs a transport; the runtime defaults to stdio.
+            var t_buf: [256]u8 = undefined;
+            const transport_path = std.fmt.bufPrint(&t_buf, "mcp_servers.{s}.transport", .{name}) catch continue;
+            if (doc.get(transport_path) == null) {
+                doc.setString(transport_path, "stdio") catch {};
+            }
+        }
+        // A list that shrank is a change even when no line was rewritten.
+        return parsed != before;
     }
 
     fn gotConfigSaved(self: *AppState, result: runtime.Result) void {

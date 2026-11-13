@@ -440,6 +440,25 @@ pub const ConfigDoc = struct {
         };
     }
 
+    /// A dotted path's object, for a section the form reads as a whole rather
+    /// than one key at a time (`mcp_servers`). Null when the path is missing
+    /// or is not an object.
+    pub fn objectAt(self: *ConfigDoc, path: []const u8) ?std.json.ObjectMap {
+        var cur: std.json.Value = self.value;
+        var it = std.mem.splitScalar(u8, path, '.');
+        while (it.next()) |part| {
+            const obj = switch (cur) {
+                .object => |o| o,
+                else => return null,
+            };
+            cur = obj.get(part) orelse return null;
+        }
+        return switch (cur) {
+            .object => |o| o,
+            else => null,
+        };
+    }
+
     /// Sets a dotted path to a string, creating the objects along the way.
     /// Every step walks a *pointer* into `self.value`: an `ObjectMap` is a
     /// value type, so mutating a copy would leave `self.value` pointing at the

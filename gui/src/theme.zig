@@ -195,7 +195,10 @@ pub fn uiTheme(p: Palette) ui.Theme {
     t.accent_hover = p.accent.mix(p.text, 0.16);
     t.accent_text = p.accent_text;
     t.track = p.border;
-    t.knob = p.text;
+    // The knob is the surface colour, not the text colour: on a monochrome
+    // palette (Matrix, Amber) the text is the accent, so an off switch drew a
+    // bright knob on a dark track and read as on.
+    t.knob = p.panel.mix(p.text, 0.15);
     t.danger = p.danger;
     t.success = p.success;
     t.shadow = .{ .a = if (p.dark) 0.45 else 0.14 };

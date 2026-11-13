@@ -164,7 +164,7 @@ fn brand(s: *AppState, c: *ui.Context) void {
     const row = ui.div(c).row().wFull().px(14).pt(14).pb(6).gap(9).itemsCenter();
     defer row.end();
 
-    ui.icon(c, "hexagon.fill", .{ .size = 17, .color = s.palette.accent });
+    ui.icon(c, "cube", .{ .size = 17, .color = s.palette.accent });
     ui.text(c, "nullclaw", .{ .size = 14.5, .weight = .semibold, .color = s.palette.text });
     ui.spacer(c);
 
@@ -621,7 +621,7 @@ fn jsonView(s: *AppState, c: *ui.Context) void {
     if (s.json_lines == null) {
         const empty = ui.div(c).column().grow().wFull().center().gap(8);
         defer empty.end();
-        ui.icon(c, "doc.text.magnifyingglass", .{ .size = 22, .color = s.palette.faint });
+        ui.icon(c, "doc.text", .{ .size = 22, .color = s.palette.faint });
         ui.text(c, if (s.json_running) "Reading…" else "Nothing loaded yet", .{
             .size = 13,
             .color = s.palette.faint,
@@ -764,7 +764,7 @@ fn rowsView(s: *AppState, c: *ui.Context, rows: *backend.Rows) void {
         // pair of brackets.
         const empty = ui.div(c).column().wFull().center().gap(7).py(40);
         defer empty.end();
-        ui.icon(c, "tray", .{ .size = 22, .color = s.palette.faint });
+        ui.icon(c, "doc.text", .{ .size = 22, .color = s.palette.faint });
         ui.text(c, emptyTitle(s.page), .{ .size = 13, .color = s.palette.muted });
         ui.text(c, emptyHint(s.page), .{ .size = 11.5, .color = s.palette.faint });
         return;
@@ -925,7 +925,7 @@ fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
     {
         const row = ui.div(c).row().wFull().gap(10).itemsCenter();
         defer row.end();
-        ui.icon(c, "bolt.horizontal.circle", .{ .size = 13, .color = if (running) s.palette.success else s.palette.warning });
+        ui.icon(c, "circle.lefthalf.filled", .{ .size = 13, .color = if (running) s.palette.success else s.palette.warning });
         ui.text(c, "Built-in nullclaw runtime", .{ .size = 13.5, .weight = .semibold, .color = s.palette.text });
         kit.tag(c, if (running) "running" else "stopped", .{
             .status = if (running) .success else .neutral,
@@ -1085,6 +1085,10 @@ fn toggleField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8
     });
 }
 
+/// The settings worth a control on this page: what answers, where it works,
+/// which servers it can call, and whether it runs on a schedule. The rest of
+/// `config.json` stays in the advanced fold — a form that mirrors every key is
+/// a worse editor than the file itself.
 fn commonConfigForm(s: *AppState, c: *ui.Context) void {
     {
         const section = configSection(c, s, "Provider", "Which model answers, and the credentials used to reach it.");
@@ -1099,40 +1103,117 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
         formField(s, c, "Provider base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
     }
     {
-        const section = configSection(c, s, "Gateway", "Where the built-in runtime listens. Restart it after a change.");
+        const section = configSection(c, s, "Workspace", "The directory the agent may read and write.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        formField(s, c, "Gateway host", "`gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
-        formField(s, c, "Gateway port", "`gateway.port`.", "3000", &s.cfg_gateway_port);
-        toggleField(s, c, "Allow public bind", "`gateway.allow_public_bind`.", &s.cfg_gateway_allow_public_bind);
-        if (s.cfg_gateway_allow_public_bind) {
-            ui.text(c, "The gateway will accept connections from other machines. Keep pairing and a token enabled.", .{ .size = 11, .color = s.palette.danger, .wrap = true });
-        }
+        formField(s, c, "Workspace path", "`workspace`. Empty uses the runtime's default.", "~/.nullclaw/workspace", &s.cfg_workspace);
     }
     {
-        const section = configSection(c, s, "Agent", "How independently the agent acts.");
+        const section = configSection(c, s, "MCP servers", "One per line: `name command`. The agent can call these.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        autonomyField(s, c);
+        mcpField(s, c);
     }
     {
-        const section = configSection(c, s, "Memory", "Where turns are stored, and whether the agent writes to it on its own.");
+        const section = configSection(c, s, "Cron", "Whether scheduled tasks run, and how often the scheduler wakes.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        memoryField(s, c);
-        toggleField(s, c, "Auto-save turns", "`memory.auto_save`.", &s.cfg_memory_auto_save);
+        toggleField(s, c, "Run scheduled tasks", "`cron.enabled`.", &s.cfg_cron_enabled);
+        formField(s, c, "Scheduler interval", "Minutes between ticks, `cron.interval_minutes`.", "30", &s.cfg_cron_interval);
     }
     {
-        const section = configSection(c, s, "Reliability", "What happens when a provider call fails.");
+        const section = configSection(c, s, "Skills", "Installed skills, read from the workspace. Manage them with `nullclaw skills`.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        formField(s, c, "Provider retries", "`reliability.provider_retries`.", "2", &s.cfg_retries);
-        formField(s, c, "Backoff", "`reliability.provider_backoff_ms`.", "500", &s.cfg_backoff_ms);
+        skillsSummary(s, c);
     }
+    {
+        const section = configSection(c, s, "Capabilities", "What this build has, and what the config turns on.");
+        defer section.end();
+        const card = configCard(c, s);
+        defer card.end();
+        capabilitiesSummary(s, c);
+    }
+}
+
+/// The MCP list: one `name command` per line, in a box that grows with it.
+fn mcpField(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().gap(12).itemsStart();
+    defer row.end();
+    fieldLabel(c, s, "Servers", "`mcp_servers`. One `name command` per line.");
+    const field = ui.div(c).column().grow().minW(0).gap(4);
+    defer field.end();
+    // `bare = false`: the area draws its own box, so a list of servers reads
+    // as a field rather than as loose text on the card.
+    _ = ui.textArea(c, &s.cfg_mcp_servers, .{
+        .placeholder = "filesystem npx -y @modelcontextprotocol/server-filesystem",
+        .min_lines = 3,
+        .max_lines = 10,
+        .size = 12,
+        .bare = false,
+        .color = s.palette.text,
+        .caret_color = s.palette.accent,
+    });
+    ui.text(c, "Editing this list writes `mcp_servers`; a server's other keys are kept.", .{
+        .size = 11,
+        .color = s.palette.faint,
+        .wrap = true,
+    });
+}
+
+/// Skills are files in the workspace, not config keys. The page says how many
+/// there are and where they live, and leaves installing to the CLI.
+fn skillsSummary(s: *AppState, c: *ui.Context) void {
+    const count = s.skills_count;
+    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
+    defer row.end();
+    {
+        const label = ui.div(c).column().w(260).minW(260).gap(2);
+        defer label.end();
+        ui.text(c, "Installed", .{ .size = 12.5, .color = s.palette.text });
+        ui.text(c, "`<workspace>/skills`.", .{ .size = 11, .color = s.palette.faint });
+    }
+    if (count == null) {
+        ui.text(c, "Not read yet — open the Skills page.", .{ .size = 11.5, .color = s.palette.faint });
+    } else if (count.? == 0) {
+        ui.text(c, "None installed.", .{ .size = 11.5, .color = s.palette.muted });
+    } else {
+        ui.textf(c, .{ .size = 12, .color = s.palette.text, .tabular = true }, "{d} installed", .{count.?});
+    }
+}
+
+/// Capabilities are a property of the build plus the config, so the page
+/// shows the counts rather than offering controls for them.
+fn capabilitiesSummary(s: *AppState, c: *ui.Context) void {
+    const caps = s.caps_summary orelse {
+        const row = ui.div(c).row().wFull().gap(12).itemsCenter();
+        defer row.end();
+        ui.text(c, "Not read yet — open the Capabilities page.", .{ .size = 11.5, .color = s.palette.faint });
+        return;
+    };
+    const row = ui.div(c).row().wFull().gap(20).itemsCenter();
+    defer row.end();
+    capsFact(s, c, "Channels", caps.channels_configured, caps.channels_total);
+    capsFact(s, c, "Tools", caps.tools, caps.tools);
+    capsFact(s, c, "Memory engines", caps.memory_active, caps.memory_total);
+}
+
+/// One count: the number, then what it counts. `1 / Channels of 2` read as
+/// three fragments; the label leads and the ratio follows it on one line.
+fn capsFact(s: *AppState, c: *ui.Context, label: []const u8, on: usize, total: usize) void {
+    const col = ui.div(c).column().gap(3);
+    defer col.end();
+    {
+        const row = ui.div(c).row().gap(6).itemsEnd();
+        defer row.end();
+        ui.textf(c, .{ .size = 16, .weight = .semibold, .color = s.palette.text, .tabular = true }, "{d}", .{on});
+        ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "of {d}", .{total});
+    }
+    ui.text(c, label, .{ .size = 10.5, .color = s.palette.muted });
 }
 
 /// The memory engine pick. A select rather than free text, for the same reason
@@ -1156,7 +1237,9 @@ fn memoryField(s: *AppState, c: *ui.Context) void {
 /// what the primary button will do. The state itself lives in the header
 /// chip, so it is not repeated here.
 fn configActions(s: *AppState, c: *ui.Context) void {
-    const band = ui.div(c).column().wFull().pt(10).pb(14).gap(6);
+    // Room under the buttons: at `pb(14)` the row sat against the window's
+    // last pixel, and the primary button's label was cut by the edge.
+    const band = ui.div(c).column().wFull().pt(10).pb(20).gap(6);
     defer band.end();
 
     _ = c.leaf(.{
@@ -1175,7 +1258,7 @@ fn configActions(s: *AppState, c: *ui.Context) void {
     const ready = s.config != null and !s.config_running;
     // An explicit width: `.auto` measured the label at 82 points and left the
     // box 2 points of slack, and the last glyph was drawn past the edge.
-    if (ui.button(c, "Save & restart", .{ .variant = .primary, .size = 12, .icon = "square.and.arrow.down", .width = .{ .px = 148 }, .disabled = !ready }).clicked) s.saveConfig();
+    if (ui.button(c, "Save & restart", .{ .variant = .primary, .size = 12, .icon = "square.and.arrow.up", .width = .{ .px = 168 }, .disabled = !ready }).clicked) s.saveConfig();
     if (ui.button(c, "Apply", .{ .size = 12, .icon = "checkmark", .disabled = !ready }).clicked) s.applyConfigForm();
     if (ui.button(c, "Reload", .{ .variant = .ghost, .size = 12, .icon = "arrow.clockwise", .disabled = s.config_running }).clicked) s.loadConfig();
     ui.spacer(c);
@@ -1245,7 +1328,7 @@ fn configEditor(s: *AppState, c: *ui.Context) void {
         .mono = true,
         .color = s.palette.text,
     });
-    if (ui.button(c, "Set path", .{ .size = 12, .icon = "equal" }).clicked) s.applyEdit();
+    if (ui.button(c, "Set path", .{ .size = 12, .icon = "equal.square" }).clicked) s.applyEdit();
     if (ui.button(c, "", .{ .variant = .ghost, .icon = "xmark", .size = 12 }).clicked) {
         s.edit_value.clear();
     }
