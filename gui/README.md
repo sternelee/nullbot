@@ -45,6 +45,8 @@ the app runs:
 | `05-expanded.png` | The same page with every key opened |
 | `06-complaint.png` | The same page when the runtime answers nothing: its complaint is on the page |
 | `07-diagnostics.png` | The diagnostics panel over the chat: runtime, paths, session, theme |
+| `08-capabilities.png` | Capabilities as a list: channels, memory engines and tools, each with its state |
+| `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
 
 The shots are taken through the same path the app uses — a runtime answering
 from a process, and a config file on disk — rather than by handing the pages
@@ -83,6 +85,12 @@ even though it cannot build it here.
 | Service | `service status` |
 | Update | `update --check` |
 
+A page that knows the shape of its answer draws it as a list — one group per
+kind of thing, one row per record, with its state at the right edge — and
+falls back to the JSON tree when the answer does not fit. Capabilities,
+Models, Memory, Skills, Channels, Cron and MCP servers have readers; the rest
+draw the tree.
+
 The four without `--json` print prose; those pages show the prose rather than
 rows. Session history comes from `agent sessions list --json` and
 `history show <key> --json` — the runtime has no HTTP API for conversations, so
@@ -95,7 +103,7 @@ the window talks to the CLI.
 | `src/main.zig` | `App` and the window, and nothing else |
 | `src/state.zig` | `AppState`: sessions, transcript, pages, config editing, and every action |
 | `src/view.zig` | The drawing: sidebar, transcript, composer, JSON rows, toasts |
-| `src/backend.zig` | The runtime's side: argv builders, the JSON it returns, `config.json` |
+| `src/backend.zig` | The runtime's side: argv builders, the JSON it returns, its readers, `config.json` |
 | `src/runtime.zig` | Running `nullclaw` off the UI thread and folding results back in |
 | `src/md.zig` | The little markdown reader the transcript draws with |
 | `src/theme.zig` | Six palettes, mapped onto nanoui's theme |

@@ -195,6 +195,10 @@ pub const AppState = struct {
     /// The generic JSON page: the raw reply and its flattened lines.
     json_text: []u8 = &.{},
     json_lines: ?backend.JsonLines = null,
+    /// The same answer read as list rows, for the pages that know what they
+    /// asked for. Null when the page has no reader or the answer did not fit
+    /// the shape, and the tree is drawn instead.
+    rows: ?backend.Rows = null,
     json_expanded: std.StringHashMapUnmanaged(void) = .empty,
     json_running: bool = false,
 
@@ -694,6 +698,36 @@ pub const AppState = struct {
         self.json_text = self.gpa.dupe(u8, text) catch &.{};
         self.clearExpanded();
         self.rebuildJson();
+        self.rebuildRows();
+    }
+
+    /// Reads the answer as list rows when the page has a reader for it. A
+    /// reader that cannot make sense of the document leaves `problem` set and
+    /// the page falls back to the tree, so nothing is lost.
+    fn rebuildRows(self: *AppState) void {
+        if (self.rows) |*r| r.deinit();
+        self.rows = null;
+        const text = self.json_text;
+        if (text.len == 0) return;
+        const built = switch (self.page) {
+            .capabilities => backend.readCapabilities(self.gpa, text),
+            .models => backend.readModels(self.gpa, text),
+            .memory => backend.readMemoryStats(self.gpa, text),
+            .skills => backend.readRecordList(self.gpa, text, "Skills"),
+            .channels => backend.readRecordList(self.gpa, text, "Channels"),
+            .cron => backend.readRecordList(self.gpa, text, "Scheduled tasks"),
+            .mcp => backend.readRecordList(self.gpa, text, "MCP servers"),
+            else => return,
+        };
+        // A reader that could not read the document falls back to the tree.
+        // A reader that read it and found nothing keeps the empty list: "no
+        // skills installed" is an answer, and a tree of `[` `]` is not.
+        if (built.problem != null) {
+            var dropped = built;
+            dropped.deinit();
+            return;
+        }
+        self.rows = built;
     }
 
     /// Drops every open path. The map owns its key strings — `togglePath` and
@@ -716,6 +750,8 @@ pub const AppState = struct {
         self.json_text = &.{};
         if (self.json_lines) |*l| l.deinit();
         self.json_lines = null;
+        if (self.rows) |*r| r.deinit();
+        self.rows = null;
     }
 
     /// Opens or closes a node the viewer drew as a summary line.

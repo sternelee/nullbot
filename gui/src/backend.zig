@@ -742,6 +742,328 @@ pub const JsonLines = struct {
     }
 };
 
+// ── List rows ───────────────────────────────────────────────────────────
+//
+// The runtime's data pages answer with objects and arrays of records, not
+// with prose. Drawing them as a JSON tree makes the reader parse the shape
+// themselves; a page that knows what it asked for can draw a row per record
+// with its state on the right. `Rows` is that: a flat list of titled rows,
+// each with an optional state, built from a document by a small reader.
+
+/// One line of a data page: a title, an optional detail under it, and a
+/// state shown at the right edge.
+pub const Row = struct {
+    title: []u8,
+    /// Empty for a row that has nothing to say under its title. Owned when
+    /// non-empty; the empty slice is the literal, which is not freed.
+    detail: []const u8 = "",
+    state: State = .none,
+
+    pub const State = enum { none, on, off, warn, bad };
+
+    pub fn deinit(self: *const Row, gpa: std.mem.Allocator) void {
+        gpa.free(self.title);
+        if (self.detail.len > 0) gpa.free(self.detail);
+    }
+};
+
+/// A titled group of rows: `Channels`, `Tools`, `Memory engines`.
+pub const Group = struct {
+    title: []u8,
+    rows: std.ArrayListUnmanaged(Row) = .empty,
+
+    pub fn deinit(self: *Group, gpa: std.mem.Allocator) void {
+        gpa.free(self.title);
+        for (self.rows.items) |*r| r.deinit(gpa);
+        self.rows.deinit(gpa);
+    }
+};
+
+pub const Rows = struct {
+    gpa: std.mem.Allocator,
+    groups: std.ArrayListUnmanaged(Group) = .empty,
+    /// A line shown above the groups: the document's own summary, when it has
+    /// one worth repeating.
+    note: []u8 = &.{},
+    /// Set when the text was not the shape this page expects; the page then
+    /// falls back to the raw tree.
+    problem: ?[]const u8 = null,
+    arena: std.heap.ArenaAllocator,
+
+    pub fn deinit(self: *Rows) void {
+        for (self.groups.items) |*g| g.deinit(self.gpa);
+        self.groups.deinit(self.gpa);
+        if (self.note.len > 0) self.gpa.free(self.note);
+        self.arena.deinit();
+    }
+
+    pub fn empty(gpa: std.mem.Allocator) Rows {
+        return .{ .gpa = gpa, .arena = std.heap.ArenaAllocator.init(gpa) };
+    }
+
+    fn group(self: *Rows, title: []const u8) !*Group {
+        for (self.groups.items) |*g| {
+            if (std.mem.eql(u8, g.title, title)) return g;
+        }
+        const owned = try self.gpa.dupe(u8, title);
+        errdefer self.gpa.free(owned);
+        try self.groups.append(self.gpa, .{ .title = owned });
+        return &self.groups.items[self.groups.items.len - 1];
+    }
+
+    fn row(self: *Rows, group_title: []const u8, title: []const u8, detail: []const u8, state: Row.State) !void {
+        const g = try self.group(group_title);
+        const owned_title = try self.gpa.dupe(u8, title);
+        errdefer self.gpa.free(owned_title);
+        const owned_detail = if (detail.len > 0) try self.gpa.dupe(u8, detail) else "";
+        errdefer if (owned_detail.len > 0) self.gpa.free(owned_detail);
+        try g.rows.append(self.gpa, .{ .title = owned_title, .detail = owned_detail, .state = state });
+    }
+
+    pub fn totalRows(self: *const Rows) usize {
+        var n: usize = 0;
+        for (self.groups.items) |g| n += g.rows.items.len;
+        return n;
+    }
+};
+
+/// Reads `capabilities --json` into groups: the channels, the memory engines,
+/// and the tools, each with whether the build has it and whether the config
+/// turns it on.
+pub fn readCapabilities(gpa: std.mem.Allocator, text: []const u8) Rows {
+    var out = Rows.empty(gpa);
+    const root = std.json.parseFromSliceLeaky(std.json.Value, out.arena.allocator(), text, .{}) catch {
+        out.problem = "the runtime did not print JSON";
+        return out;
+    };
+    const obj = switch (root) {
+        .object => |o| o,
+        else => {
+            out.problem = "the answer is not an object";
+            return out;
+        },
+    };
+
+    if (obj.get("version")) |v| {
+        if (v == .string) out.note = gpa.dupe(u8, v.string) catch &.{};
+    }
+
+    // Channels: a record per channel, with the count the config sets.
+    if (obj.get("channels")) |ch| {
+        if (ch == .array) {
+            for (ch.array.items) |item| {
+                if (item != .object) continue;
+                const rec = item.object;
+                const key = str(rec.get("key")) orelse continue;
+                const label = str(rec.get("label")) orelse key;
+                const configured = bool_(rec.get("configured")) orelse false;
+                const in_build = bool_(rec.get("enabled_in_build")) orelse true;
+                const count = int(rec.get("configured_count")) orelse 0;
+                var detail_buf: [96]u8 = undefined;
+                const detail = if (!in_build)
+                    "not in this build"
+                else if (configured and count > 0)
+                    std.fmt.bufPrint(&detail_buf, "{s} · {d} configured", .{ label, count }) catch label
+                else if (configured)
+                    std.fmt.bufPrint(&detail_buf, "{s} · configured", .{label}) catch label
+                else
+                    std.fmt.bufPrint(&detail_buf, "{s} · not configured", .{label}) catch label;
+                out.row("Channels", key, detail, if (!in_build) .off else if (configured) .on else .none) catch {};
+            }
+        }
+    }
+
+    // Memory engines: the registry's list, with the active one marked.
+    const active = str(obj.get("active_memory_backend")) orelse "";
+    if (obj.get("memory_engines")) |eng| {
+        if (eng == .array) {
+            for (eng.array.items) |item| {
+                if (item != .object) continue;
+                const rec = item.object;
+                const name = str(rec.get("name")) orelse continue;
+                const in_build = bool_(rec.get("enabled_in_build")) orelse true;
+                const is_active = std.mem.eql(u8, name, active);
+                out.row("Memory engines", name, if (is_active) "active" else if (!in_build) "not in this build" else "", if (!in_build) .off else if (is_active) .on else .none) catch {};
+            }
+        }
+    }
+
+    // Tools: a bare list of names, plus the detail object that says which the
+    // runtime loaded and which the config enables.
+    if (obj.get("tools_detail")) |td| {
+        if (td == .object) {
+            const detail = td.object;
+            if (detail.get("runtime_loaded")) |loaded| {
+                if (loaded == .array) {
+                    for (loaded.array.items) |item| {
+                        const name = str(item) orelse continue;
+                        out.row("Tools", name, "loaded", .on) catch {};
+                    }
+                }
+            }
+        }
+    } else if (obj.get("tools")) |tools| {
+        if (tools == .array) {
+            for (tools.array.items) |item| {
+                const name = str(item) orelse continue;
+                out.row("Tools", name, "", .none) catch {};
+            }
+        }
+    }
+
+    return out;
+}
+
+/// Reads `models summary --json`: the default provider and model, then one
+/// row per provider with whether it has a key.
+pub fn readModels(gpa: std.mem.Allocator, text: []const u8) Rows {
+    var out = Rows.empty(gpa);
+    const root = std.json.parseFromSliceLeaky(std.json.Value, out.arena.allocator(), text, .{}) catch {
+        out.problem = "the runtime did not print JSON";
+        return out;
+    };
+    const obj = switch (root) {
+        .object => |o| o,
+        else => {
+            out.problem = "the answer is not an object";
+            return out;
+        },
+    };
+
+    const provider = str(obj.get("default_provider")) orelse "";
+    const model = str(obj.get("default_model")) orelse "";
+    if (model.len > 0 or provider.len > 0) {
+        var buf: [256]u8 = undefined;
+        out.note = gpa.dupe(u8, std.fmt.bufPrint(&buf, "{s} · {s}", .{
+            if (provider.len > 0) provider else "no provider",
+            if (model.len > 0) model else "no model",
+        }) catch "") catch &.{};
+    }
+
+    if (obj.get("providers")) |provs| {
+        if (provs == .array) {
+            for (provs.array.items) |item| {
+                if (item != .object) continue;
+                const rec = item.object;
+                const name = str(rec.get("name")) orelse continue;
+                const has_key = bool_(rec.get("has_key")) orelse false;
+                const is_default = std.mem.eql(u8, name, provider);
+                out.row("Providers", name, if (is_default) "default" else "", if (has_key) .on else .warn) catch {};
+            }
+        }
+    }
+    return out;
+}
+
+/// Reads a plain array of records — `skills list`, `channel list`,
+/// `cron list`, `mcp list` — into one group, using whichever name field the
+/// record carries.
+pub fn readRecordList(gpa: std.mem.Allocator, text: []const u8, group_title: []const u8) Rows {
+    var out = Rows.empty(gpa);
+    const root = std.json.parseFromSliceLeaky(std.json.Value, out.arena.allocator(), text, .{}) catch {
+        out.problem = "the runtime did not print JSON";
+        return out;
+    };
+    const items = switch (root) {
+        .array => |a| a.items,
+        .object => |o| blk: {
+            // Some commands wrap the list in an object; take the first array.
+            var it = o.iterator();
+            while (it.next()) |e| {
+                if (e.value_ptr.* == .array) break :blk e.value_ptr.array.items;
+            }
+            out.problem = "the answer holds no list";
+            return out;
+        },
+        else => {
+            out.problem = "the answer is not a list";
+            return out;
+        },
+    };
+
+    for (items) |item| {
+        switch (item) {
+            .object => |rec| {
+                const title = str(rec.get("name")) orelse
+                    str(rec.get("key")) orelse
+                    str(rec.get("id")) orelse
+                    str(rec.get("session_key")) orelse
+                    continue;
+                const detail = str(rec.get("description")) orelse
+                    str(rec.get("label")) orelse
+                    str(rec.get("schedule")) orelse
+                    str(rec.get("command")) orelse
+                    "";
+                const state: Row.State = if (bool_(rec.get("enabled")) orelse true) .on else .off;
+                out.row(group_title, title, detail, state) catch {};
+            },
+            .string => |s| out.row(group_title, s, "", .none) catch {},
+            else => {},
+        }
+    }
+    return out;
+}
+
+/// Reads `memory stats --json`: one group of key/value rows, with the numbers
+/// the page is usually opened for called out.
+pub fn readMemoryStats(gpa: std.mem.Allocator, text: []const u8) Rows {
+    var out = Rows.empty(gpa);
+    const root = std.json.parseFromSliceLeaky(std.json.Value, out.arena.allocator(), text, .{}) catch {
+        out.problem = "the runtime did not print JSON";
+        return out;
+    };
+    const obj = switch (root) {
+        .object => |o| o,
+        else => {
+            out.problem = "the answer is not an object";
+            return out;
+        },
+    };
+
+    // The two numbers the page exists for come first.
+    if (int(obj.get("entries"))) |n| {
+        var buf: [64]u8 = undefined;
+        out.note = gpa.dupe(u8, std.fmt.bufPrint(&buf, "{d} entries", .{n}) catch "") catch &.{};
+    }
+
+    var it = obj.iterator();
+    while (it.next()) |e| {
+        const value = switch (e.value_ptr.*) {
+            .string => |s| s,
+            .integer => |i| std.fmt.allocPrint(out.arena.allocator(), "{d}", .{i}) catch continue,
+            .bool => |b| if (b) "true" else "false",
+            .null => "—",
+            else => continue,
+        };
+        out.row("Memory", e.key_ptr.*, value, .none) catch {};
+    }
+    return out;
+}
+
+fn str(v: ?std.json.Value) ?[]const u8 {
+    const val = v orelse return null;
+    return switch (val) {
+        .string => |s| s,
+        else => null,
+    };
+}
+
+fn bool_(v: ?std.json.Value) ?bool {
+    const val = v orelse return null;
+    return switch (val) {
+        .bool => |b| b,
+        else => null,
+    };
+}
+
+fn int(v: ?std.json.Value) ?i64 {
+    const val = v orelse return null;
+    return switch (val) {
+        .integer => |i| i,
+        else => null,
+    };
+}
+
 /// The paths a JSON document offers to open, for a page's expand-all control.
 /// A document that is not an object offers none.
 pub fn topLevelKeys(gpa: std.mem.Allocator, text: []const u8) [][]u8 {

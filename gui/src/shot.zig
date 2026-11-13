@@ -79,6 +79,16 @@ test "screenshots" {
     w.settle(1);
     try shoot(&w, "04-models");
 
+    // A page that draws its answer as a list rather than a tree.
+    w.app.openPage(.capabilities);
+    w.settle(1);
+    try shoot(&w, "08-capabilities");
+
+    // A page whose command answered with nothing, which is an answer.
+    w.app.openPage(.skills);
+    w.settle(1);
+    try shoot(&w, "09-empty");
+
     // The same page with every key opened, which is what clicking a summary row
     // does.
     w.app.expandAll();

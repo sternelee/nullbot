@@ -29,14 +29,23 @@ const stub_source =
     \\  printf '%s' '{"session":"s1","response":"stub reply","turn_count":4}'
     \\  ;;
     \\"models summary")
-    \\  printf '%s' '{"default":"stub-model","providers":[{"name":"openrouter","model":"stub-model","configured":true}]}'
+    \\  printf '%s' '{"default_provider":"openrouter","default_model":"openrouter/stub-model","providers":[{"name":"openrouter","has_key":true},{"name":"anthropic","has_key":false}]}'
     \\  ;;
     \\"config validate")
     \\  printf '%s' '{"valid":true}'
     \\  ;;
+    \\"memory stats")
+    \\  printf '%s' '{"backend":"sqlite","retrieval":"hybrid","entries":16,"sources":1}'
+    \\  ;;
+    \\"skills list"|"channel list"|"cron list"|"mcp list")
+    \\  printf '%s' '[]'
+    \\  ;;
     \\*)
     \\  case "$1" in
-    \\  status|capabilities|doctor|config|models|memory|skills|channel|cron|mcp|auth|workspace|hardware|service|update)
+    \\  capabilities)
+    \\    printf '%s' '{"version":"stub","active_memory_backend":"sqlite","channels":[{"key":"cli","label":"CLI","enabled_in_build":true,"configured":true,"configured_count":1},{"key":"telegram","label":"Telegram","enabled_in_build":true,"configured":false,"configured_count":0}],"memory_engines":[{"name":"sqlite","enabled_in_build":true,"configured":true},{"name":"markdown","enabled_in_build":true,"configured":false}],"tools":["shell","file_read"],"tools_detail":{"runtime_loaded":["shell","file_read"]}}'
+    \\    ;;
+    \\  status|doctor|config|models|memory|skills|channel|cron|mcp|auth|workspace|hardware|service|update)
     \\    printf '%s' '{"page":"'"$1"'","stub":true}'
     \\    ;;
     \\  *)

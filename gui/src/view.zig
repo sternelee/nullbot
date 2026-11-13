@@ -612,6 +612,12 @@ fn jsonPage(s: *AppState, c: *ui.Context) void {
 }
 
 fn jsonView(s: *AppState, c: *ui.Context) void {
+    // A page that knows the shape of its answer draws rows; one that does not
+    // falls through to the tree below.
+    if (s.rows) |*rows| {
+        rowsView(s, c, rows);
+        return;
+    }
     if (s.json_lines == null) {
         const empty = ui.div(c).column().grow().wFull().center().gap(8);
         defer empty.end();
@@ -742,6 +748,103 @@ fn jsonRow(s: *AppState, c: *ui.Context, line: backend.JsonLine) void {
         .color = key_color,
         .spans = spans,
     } }, null);
+}
+
+/// The answer as a list: one group per kind of thing, one row per record,
+/// with its state at the right edge. This is what the page asked for, so it
+/// can say more than the tree can — which channel is configured, which memory
+/// engine is active, which tool the runtime loaded.
+fn rowsView(s: *AppState, c: *ui.Context, rows: *backend.Rows) void {
+    const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip().gap(14);
+    defer scroller.end();
+
+    if (rows.totalRows() == 0) {
+        // The command answered, and the answer was nothing. Say that, with
+        // the command that would change it, rather than drawing an empty
+        // pair of brackets.
+        const empty = ui.div(c).column().wFull().center().gap(7).py(40);
+        defer empty.end();
+        ui.icon(c, "tray", .{ .size = 22, .color = s.palette.faint });
+        ui.text(c, emptyTitle(s.page), .{ .size = 13, .color = s.palette.muted });
+        ui.text(c, emptyHint(s.page), .{ .size = 11.5, .color = s.palette.faint });
+        return;
+    }
+
+    if (rows.note.len > 0) {
+        ui.text(c, rows.note, .{ .size = 11.5, .color = s.palette.faint, .mono = true });
+    }
+
+    for (rows.groups.items) |group| {
+        const block = ui.div(c).column().wFull().gap(6);
+        defer block.end();
+
+        {
+            const head = ui.div(c).row().wFull().gap(8).itemsCenter();
+            defer head.end();
+            ui.text(c, group.title, .{ .size = 11, .weight = .semibold, .color = s.palette.muted, .tracking = 0.6 });
+            ui.spacer(c);
+            ui.textf(c, .{ .size = 10.5, .color = s.palette.faint, .tabular = true }, "{d}", .{group.rows.items.len});
+        }
+
+        const card = ui.div(c).column().wFull().rounded(10)
+            .bg(s.palette.panel).border(s.palette.border).borderW(1);
+        defer card.end();
+        for (group.rows.items, 0..) |row, i| {
+            if (i > 0) {
+                _ = c.leaf(.{
+                    .width = .fill,
+                    .height = .{ .px = 1 },
+                    .background = s.palette.border.alpha(0.5),
+                }, .none, null);
+            }
+            rowLine(s, c, row);
+        }
+    }
+}
+
+/// What an empty page is empty of.
+fn emptyTitle(page: Page) []const u8 {
+    return switch (page) {
+        .skills => "No skills installed",
+        .channels => "No channels configured",
+        .cron => "No scheduled tasks",
+        .mcp => "No MCP servers configured",
+        else => "Nothing to show",
+    };
+}
+
+/// The command that would put something on the page.
+fn emptyHint(page: Page) []const u8 {
+    return switch (page) {
+        .skills => "nullclaw skills install <source>",
+        .channels => "nullclaw channel add <name>",
+        .cron => "nullclaw cron add",
+        .mcp => "add a server under `mcp` in config.json",
+        else => "",
+    };
+}
+
+/// One record: its name, what it is, and its state.
+fn rowLine(s: *AppState, c: *ui.Context, row: backend.Row) void {
+    const line = ui.div(c).row().wFull().gap(12).itemsCenter().px(12).py(8);
+    defer line.end();
+
+    {
+        const name = ui.div(c).column().grow().minW(0).gap(1);
+        defer name.end();
+        clipped(c, row.title, .{ .size = 12.5, .color = s.palette.text, .mono = true, .truncate = .ellipsis });
+        if (row.detail.len > 0) {
+            clipped(c, row.detail, .{ .size = 11, .color = s.palette.faint, .truncate = .ellipsis });
+        }
+    }
+
+    switch (row.state) {
+        .none => {},
+        .on => kit.tag(c, "on", .{ .status = .success, .pill = true }),
+        .off => kit.tag(c, "off", .{ .status = .neutral, .pill = true }),
+        .warn => kit.tag(c, "no key", .{ .status = .warning, .pill = true }),
+        .bad => kit.tag(c, "error", .{ .status = .danger, .pill = true }),
+    }
 }
 
 /// The toolbar owns its row, opening and closing it, so the rows below are its

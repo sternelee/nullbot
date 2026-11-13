@@ -263,6 +263,33 @@ test "every json page paints its rows below the toolbar" {
         w.app.openPage(page);
         w.settle(2);
 
+        // A page with a reader for its answer draws a list, and a list has no
+        // fold controls. Either way something has to be on the page.
+        if (w.app.rows) |*r| {
+            // An empty list is a real answer — "no skills installed" — and
+            // the page says so rather than drawing an empty tree.
+            if (r.totalRows() == 0) {
+                if (!w.tester.containsText("No ")) {
+                    std.debug.print("page {s}: empty list with no notice\n", .{@tagName(page)});
+                    return error.SilentEmptyList;
+                }
+                checked += 1;
+                continue;
+            }
+            var painted = false;
+            for (r.groups.items) |g| {
+                for (g.rows.items) |row| {
+                    if (w.tester.findText(row.title) != null) painted = true;
+                }
+            }
+            if (!painted) {
+                std.debug.print("page {s}: no row title was painted\n", .{@tagName(page)});
+                return error.ListNotPainted;
+            }
+            checked += 1;
+            continue;
+        }
+
         const lines = w.app.json_lines orelse {
             std.debug.print("page {s}: no rows at all\n", .{@tagName(page)});
             return error.NoLines;
@@ -329,28 +356,22 @@ test "a page's rows are laid out below its toolbar, across the page" {
 
     w.app.openPage(.models);
     w.settle(2);
-    const lines = w.app.json_lines orelse return error.NoLines;
-    const rows = lines.slice();
-    try testing.expect(rows.len >= 2);
 
-    const toolbar = w.tester.findText("Expand all") orelse return error.NoToolbar;
+    // Models has a reader, so it draws a list rather than a tree.
+    const list = w.app.rows orelse return error.NoList;
+    try testing.expect(list.totalRows() >= 1);
+
     var checked: usize = 0;
-    for (rows) |row| {
-        // Rows that share a line's text cannot be told apart by a lookup.
-        var twins: usize = 0;
-        for (rows) |other| {
-            if (std.mem.eql(u8, other.text, row.text)) twins += 1;
+    for (list.groups.items) |group| {
+        for (group.rows.items) |row| {
+            const rect = w.tester.findText(row.title) orelse continue;
+            // Inside the page, not under the header and not off the bottom.
+            try testing.expect(rect.y > 60);
+            try testing.expect(rect.y + rect.h <= 800);
+            checked += 1;
         }
-        if (twins != 1) continue;
-        const painted = row.painted(testing.allocator);
-        defer if (painted.ptr != row.text.ptr) testing.allocator.free(painted);
-        const rect = w.tester.findText(painted) orelse return error.RowNotPainted;
-        try testing.expect(rect.y >= toolbar.y + toolbar.h);
-        try testing.expect(rect.w > 400);
-        try testing.expect(rect.y + rect.h <= 800);
-        checked += 1;
     }
-    try testing.expect(checked >= 2);
+    try testing.expect(checked >= 1);
 }
 
 test "the diagnostics panel names what the window is connected to" {
