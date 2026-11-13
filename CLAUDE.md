@@ -9,7 +9,7 @@ Read `AGENTS.md` before any code change. It is the authoritative engineering pro
 ## Build & Test Commands
 
 ```bash
-# Requires exactly Zig 0.16.0 (verify: zig version)
+# Requires exactly Zig 0.17.0 (verify: zig version)
 zig build                           # dev build
 zig build -Doptimize=ReleaseSmall   # release build (target: <1 MB binary)
 zig build test --summary all        # run all 5,300+ tests (must pass with 0 leaks)
@@ -45,7 +45,7 @@ git config core.hooksPath .githooks
 
 ## Project Overview
 
-NullClaw is an autonomous AI assistant runtime written in Zig 0.16.0. Hard constraints: 678 KB binary, ~1 MB peak RSS, <2 ms startup. Every dependency and abstraction has a measurable size/memory cost. Only two external dependencies: vendored SQLite (with build-time SHA256 hash verification) and `websocket.zig` (pinned commit).
+NullClaw is an autonomous AI assistant runtime written in Zig 0.17.0. Hard constraints: 678 KB binary, ~1 MB peak RSS, <2 ms startup. Every dependency and abstraction has a measurable size/memory cost. Only two external dependencies: vendored SQLite (with build-time SHA256 hash verification) and `websocket.zig` (pinned commit).
 
 ## Architecture
 
@@ -106,11 +106,17 @@ defer cfg.deinit();
 
 Key config sections: `models.providers` (API keys/endpoints), `agents` (named agent configs), `channels` (per-channel settings), `memory` (backend/search/lifecycle), `gateway` (port/host/pairing), `security` (sandbox/audit/autonomy), `autonomy` (level/limits/allowlists), `runtime` (native/docker/wasm).
 
-## Zig 0.16.0 API Gotchas
+## Zig 0.17.0 API Gotchas
 
+- `@cImport` is removed. Translate C headers via `b.addTranslateC()` in `build.zig` and import them as Zig modules; simple libc calls use `extern "c"`.
+- The `**` repetition operator is removed. Use `@as([N]T, @splat(value))`, with `&` when a slice is expected.
+- `allocator.dupeZ(u8, s)` → `allocator.dupeSentinel(u8, s, 0)`; `std.fmt.bufPrintZ` → `compat.bufPrintZ`.
+- `std.ascii.indexOfIgnoreCase` → `compat.indexOfIgnoreCase`; `std.meta.fields` → `@typeInfo(T).@"struct".field_names` / `field_types` / `decl_names`.
+- `std.heap.memory_pool.Managed` → `std.heap.MemoryPool(T)` with explicit allocator arguments.
+- `std.Uri.getHost` → `std.Io.net.HostName.fromUri(uri, &buf)`.
 - `std.io.getStdOut()` does NOT exist. Use `std.fs.File.stdout()`.
 - HTTP client: `std.http.Client.fetch()` with `std.Io.Writer.Allocating`.
-- Child processes: `std.process.Child.init(argv, allocator)`, `.Pipe` (capitalized).
+- Child processes: `std.process.run` / `std.process.spawn` via `compat.process.Child`.
 - `ArrayListUnmanaged`: init with `.empty`, pass allocator to every method.
 - `ChaCha20Poly1305.decrypt`: use stack buffer then `allocator.dupe()` (heap buffer segfaults on macOS).
 - `SQLITE_TRANSIENT` in auto-translated C code: use `SQLITE_STATIC` (null) instead.

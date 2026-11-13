@@ -4148,7 +4148,9 @@ test "telegram smartSplitMessage no word boundary falls back to hard cut" {
 }
 
 test "telegram smartSplitMessage preserves total content" {
-    const msg = "word " ** 100;
+    const msg = try std.testing.allocator.alloc(u8, 500);
+    defer std.testing.allocator.free(msg);
+    for (0..100) |i| std.mem.copyForwards(u8, msg[i * 5 .. (i + 1) * 5], "word ");
     var it = smartSplitMessage(msg, 50);
     var total: usize = 0;
     while (it.next()) |chunk| {
@@ -4160,7 +4162,9 @@ test "telegram smartSplitMessage preserves total content" {
 
 test "telegram buildOutgoingTextChunks appends continuation only to non-last chunks" {
     const allocator = std.testing.allocator;
-    const text = ("word " ** 900) ++ "tail";
+    var text_buf: [4505]u8 = @splat('w');
+    for (0..900) |i| std.mem.copyForwards(u8, text_buf[i * 5 .. (i + 1) * 5], "word ");
+    const text = text_buf[0..4500] ++ "tail";
 
     const chunks = try TelegramChannel.buildOutgoingTextChunks(allocator, text);
     defer {

@@ -64,7 +64,7 @@ pub const Stream = struct {
     pub const Handle = IoNet.Socket.Handle;
     pub const Reader = IoNet.Stream.Reader;
     pub const Writer = IoNet.Stream.Writer;
-    pub const ReadError = IoNet.Stream.Reader.Error || error{WouldBlock};
+    pub const ReadError = IoNet.Stream.Reader.Error || posix.ReadError;
     pub const WriteError = IoNet.Stream.Writer.Error;
 
     fn toInner(self: Stream) IoNet.Stream {
@@ -91,10 +91,17 @@ pub const Stream = struct {
     pub fn read(self: Stream, buffer: []u8) ReadError!usize {
         if (buffer.len == 0) return 0;
 
-        const io = shared.io();
-        var data = [1][]u8{buffer};
-        return io.vtable.netRead(io.userdata, self.handle, &data) catch |err| switch (err) {
-            error.Canceled => return error.Canceled,
+        if (builtin.os.tag == .windows) {
+            const io = shared.io();
+            var data = [1][]u8{buffer};
+            const result = (try io.operate(.{ .net_read = .{
+                .socket_handle = self.handle,
+                .data = &data,
+            } })).net_read catch |err| return err;
+            return result.data_len;
+        }
+        return posix.read(self.handle, buffer) catch |err| switch (err) {
+            error.WouldBlock => return error.WouldBlock,
             else => return err,
         };
     }
@@ -106,7 +113,13 @@ pub const Stream = struct {
         var total: usize = 0;
         while (total < bytes.len) {
             var data = [1][]const u8{bytes[total..]};
-            const n = try io.vtable.netWrite(io.userdata, self.handle, "", &data, 1);
+            const result = (try io.operate(.{ .net_write = .{
+                .socket_handle = self.handle,
+                .header = "",
+                .data = &data,
+                .splat = 1,
+            } })).net_write;
+            const n = result catch |err| return err;
             if (n == 0) return error.Unexpected;
             total += n;
         }
@@ -534,7 +547,9 @@ pub fn getAddressList(gpa: Allocator, name: []const u8, port: u16) GetAddressLis
     const name_c = name_buffer[0..name.len :0];
 
     var port_buffer: [8]u8 = undefined;
-    const port_c = std.fmt.bufPrintZ(&port_buffer, "{d}", .{port}) catch unreachable;
+    const port_text = std.fmt.bufPrint(&port_buffer, "{d}", .{port}) catch unreachable;
+    port_buffer[port_text.len] = 0;
+    const port_c: [*:0]const u8 = port_buffer[0..port_text.len :0].ptr;
 
     const hints: posix.addrinfo = .{
         .flags = .{ .CANONNAME = false, .NUMERICSERV = true },
@@ -547,8 +562,8 @@ pub fn getAddressList(gpa: Allocator, name: []const u8, port: u16) GetAddressLis
         .next = null,
     };
     var res: ?*posix.addrinfo = null;
-    switch (posix.system.getaddrinfo(name_c.ptr, port_c.ptr, &hints, &res)) {
-        @as(posix.system.EAI, @enumFromInt(0)) => {},
+    switch (posix.system.getaddrinfo(name_c.ptr, port_c, &hints, &res)) {
+        @as(posix.system.EAI, @fromBackingInt(@intCast(0))) => {},
         .ADDRFAMILY, .FAMILY => return error.AddressFamilyNotSupported,
         .AGAIN => return error.TemporaryNameServerFailure,
         .FAIL => return error.NameServerFailure,

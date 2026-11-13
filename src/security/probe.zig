@@ -121,17 +121,18 @@ test "canResolveExecutable rejects directory on PATH" {
     defer std.testing.allocator.free(bin_abs);
 
     const platform = @import("../platform.zig");
-    const c = @cImport({
-        @cInclude("stdlib.h");
-    });
+    const c = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+    };
 
-    const key_z = try std.testing.allocator.dupeZ(u8, "PATH");
+    const key_z = try std.testing.allocator.dupeSentinel(u8, "PATH", 0);
     defer std.testing.allocator.free(key_z);
 
     const old_path = platform.getEnvOrNull(std.testing.allocator, "PATH");
     defer if (old_path) |path| std.testing.allocator.free(path);
 
-    const old_path_z = if (old_path) |path| try std.testing.allocator.dupeZ(u8, path) else null;
+    const old_path_z = if (old_path) |path| try std.testing.allocator.dupeSentinel(u8, path, 0) else null;
     defer if (old_path_z) |path| std.testing.allocator.free(path);
 
     defer {
@@ -148,7 +149,7 @@ test "canResolveExecutable rejects directory on PATH" {
         }
     }
 
-    const bin_z = try std.testing.allocator.dupeZ(u8, bin_abs);
+    const bin_z = try std.testing.allocator.dupeSentinel(u8, bin_abs, 0);
     defer std.testing.allocator.free(bin_z);
     const set_rc = if (comptime builtin.os.tag == .windows)
         c._putenv_s(key_z.ptr, bin_z.ptr)

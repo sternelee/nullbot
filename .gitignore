@@ -30,3 +30,8 @@ config.json
 .cursor/
 .trae/
 .codebuddy/
+
+gui/nullclaw
+
+# Perch operator workspace (local tooling, not part of the project)
+.perch/

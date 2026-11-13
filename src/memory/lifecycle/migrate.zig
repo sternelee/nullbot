@@ -4,6 +4,7 @@
 //! and current brain.db variants. Used by migration.zig for SQLite import.
 
 const std = @import("std");
+const std_compat = @import("compat");
 const builtin = @import("builtin");
 const build_options = @import("build_options");
 const sqlite = if (build_options.enable_sqlite) @import("../engines/sqlite.zig") else @import("../engines/sqlite_disabled.zig");
@@ -50,7 +51,7 @@ pub fn readBrainDb(
 
     // Build and execute query
     var query_buf: [256]u8 = undefined;
-    const query = std.fmt.bufPrintZ(&query_buf, "SELECT {s}, {s}, {s} FROM memories", .{
+    const query = std_compat.bufPrintZ(&query_buf, "SELECT {s}, {s}, {s} FROM memories", .{
         cols.key_expr,
         cols.content_col,
         cols.category_expr,
@@ -454,7 +455,7 @@ test "readBrainDb with corrupt file returns no memories table" {
     try @import("compat").fs.Dir.wrap(tmp.dir).writeFile(.{ .sub_path = "corrupt.db", .data = "not a sqlite database" });
     const path = try @import("compat").fs.Dir.wrap(tmp.dir).realpathAlloc(std.testing.allocator, "corrupt.db");
     defer std.testing.allocator.free(path);
-    const pathZ = try std.testing.allocator.dupeZ(u8, path);
+    const pathZ = try std.testing.allocator.dupeSentinel(u8, path, 0);
     defer std.testing.allocator.free(pathZ);
 
     const result = readBrainDb(std.testing.allocator, pathZ.ptr);
@@ -475,7 +476,7 @@ test "readBrainDb with empty table returns empty slice" {
     defer std.testing.allocator.free(path);
 
     // Open it properly and create the table
-    const pathZ = try std.testing.allocator.dupeZ(u8, path);
+    const pathZ = try std.testing.allocator.dupeSentinel(u8, path, 0);
     defer std.testing.allocator.free(pathZ);
 
     var db: ?*c.sqlite3 = null;
@@ -503,7 +504,7 @@ test "readBrainDb skips rows with empty content" {
     file.close();
     const path = try @import("compat").fs.Dir.wrap(tmp.dir).realpathAlloc(std.testing.allocator, "skip_empty.db");
     defer std.testing.allocator.free(path);
-    const pathZ = try std.testing.allocator.dupeZ(u8, path);
+    const pathZ = try std.testing.allocator.dupeSentinel(u8, path, 0);
     defer std.testing.allocator.free(pathZ);
 
     var db: ?*c.sqlite3 = null;
@@ -533,7 +534,7 @@ test "readBrainDb full roundtrip with file-based db" {
     file.close();
     const path = try @import("compat").fs.Dir.wrap(tmp.dir).realpathAlloc(std.testing.allocator, "roundtrip.db");
     defer std.testing.allocator.free(path);
-    const pathZ = try std.testing.allocator.dupeZ(u8, path);
+    const pathZ = try std.testing.allocator.dupeSentinel(u8, path, 0);
     defer std.testing.allocator.free(pathZ);
 
     var db: ?*c.sqlite3 = null;

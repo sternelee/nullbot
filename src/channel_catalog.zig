@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const build_options = @import("build_options");
 const Config = @import("config.zig").Config;
 
@@ -362,9 +363,9 @@ test "every enabled channel has non-empty configured_message text" {
     for (known_channels) |meta| {
         if (!isBuildEnabled(meta.id)) continue;
         try std.testing.expect(meta.configured_message.len > 0);
-        const has_label = std.ascii.indexOfIgnoreCase(meta.configured_message, meta.label) != null;
-        const has_configured = std.ascii.indexOfIgnoreCase(meta.configured_message, "configured") != null or
-            std.ascii.indexOfIgnoreCase(meta.configured_message, "enabled") != null;
+        const has_label = compat.indexOfIgnoreCase(meta.configured_message, meta.label) != null;
+        const has_configured = compat.indexOfIgnoreCase(meta.configured_message, "configured") != null or
+            compat.indexOfIgnoreCase(meta.configured_message, "enabled") != null;
         try std.testing.expect(has_label or has_configured);
     }
 }

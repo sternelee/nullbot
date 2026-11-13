@@ -201,8 +201,8 @@ pub fn parseSummaryResponse(
 
 test "shouldSummarize returns false when disabled" {
     const messages = [_]MessageEntry{
-        .{ .role = "user", .content = "a" ** 20000 },
-        .{ .role = "assistant", .content = "b" ** 20000 },
+        .{ .role = "user", .content = &@as([20000]u8, @splat('a')) },
+        .{ .role = "assistant", .content = &@as([20000]u8, @splat('b')) },
     };
     const config = SummarizerConfig{ .enabled = false, .window_size_tokens = 10 };
     try std.testing.expect(!shouldSummarize(&messages, config));
@@ -215,7 +215,7 @@ test "shouldSummarize returns false for empty messages" {
 
 test "shouldSummarize returns false for single message" {
     const messages = [_]MessageEntry{
-        .{ .role = "user", .content = "a" ** 20000 },
+        .{ .role = "user", .content = &@as([20000]u8, @splat('a')) },
     };
     const config = SummarizerConfig{ .enabled = true, .window_size_tokens = 10 };
     try std.testing.expect(!shouldSummarize(&messages, config));
@@ -234,8 +234,8 @@ test "shouldSummarize returns false below window" {
 test "shouldSummarize returns true above window" {
     // Each message ~5000 tokens → total ~10000, window is 4000
     const messages = [_]MessageEntry{
-        .{ .role = "user", .content = "a" ** 20000 },
-        .{ .role = "assistant", .content = "b" ** 20000 },
+        .{ .role = "user", .content = &@as([20000]u8, @splat('a')) },
+        .{ .role = "assistant", .content = &@as([20000]u8, @splat('b')) },
     };
     const config = SummarizerConfig{ .enabled = true, .window_size_tokens = 4000 };
     try std.testing.expect(shouldSummarize(&messages, config));
@@ -260,10 +260,10 @@ test "partitionMessages splits at window boundary" {
     // 4 messages, each ~2500+3 tokens (10000 chars / 4 + role + separator)
     // window = 5100 fits 2 messages (~2503 * 2 = 5006 < 5100)
     const messages = [_]MessageEntry{
-        .{ .role = "user", .content = "a" ** 10000 },
-        .{ .role = "assistant", .content = "b" ** 10000 },
-        .{ .role = "user", .content = "c" ** 10000 },
-        .{ .role = "assistant", .content = "d" ** 10000 },
+        .{ .role = "user", .content = &@as([10000]u8, @splat('a')) },
+        .{ .role = "assistant", .content = &@as([10000]u8, @splat('b')) },
+        .{ .role = "user", .content = &@as([10000]u8, @splat('c')) },
+        .{ .role = "assistant", .content = &@as([10000]u8, @splat('d')) },
     };
     const config = SummarizerConfig{ .window_size_tokens = 5100 };
     const p = partitionMessages(&messages, config);
@@ -315,7 +315,7 @@ test "parseSummaryResponse extracts key facts" {
         \\The user discussed Zig programming.
         \\Key fact: Zig is a systems programming language
         \\Some other line.
-        \\- Key fact: The project uses Zig 0.16
+        \\- Key fact: The project uses Zig 0.17
     ;
     var result = try parseSummaryResponse(std.testing.allocator, response, .{ .auto_extract_semantic = true });
     defer result.deinit(std.testing.allocator);
@@ -323,7 +323,7 @@ test "parseSummaryResponse extracts key facts" {
     try std.testing.expectEqual(@as(usize, 2), result.extracted_facts.len);
     try std.testing.expectEqualStrings("Zig is a systems programming language", result.extracted_facts[0].content);
     try std.testing.expect(result.extracted_facts[0].category.eql(.core));
-    try std.testing.expectEqualStrings("The project uses Zig 0.16", result.extracted_facts[1].content);
+    try std.testing.expectEqualStrings("The project uses Zig 0.17", result.extracted_facts[1].content);
     try std.testing.expect(result.extracted_facts[1].category.eql(.core));
 }
 
@@ -400,11 +400,11 @@ test "R3: parseSummaryResponse skips empty key facts" {
 
 test "R3: partitionMessages preserves invariant — summarize + keep == total" {
     const messages = [_]MessageEntry{
-        .{ .role = "user", .content = "a" ** 100 },
-        .{ .role = "assistant", .content = "b" ** 100 },
-        .{ .role = "user", .content = "c" ** 100 },
-        .{ .role = "assistant", .content = "d" ** 100 },
-        .{ .role = "user", .content = "e" ** 100 },
+        .{ .role = "user", .content = &@as([100]u8, @splat('a')) },
+        .{ .role = "assistant", .content = &@as([100]u8, @splat('b')) },
+        .{ .role = "user", .content = &@as([100]u8, @splat('c')) },
+        .{ .role = "assistant", .content = &@as([100]u8, @splat('d')) },
+        .{ .role = "user", .content = &@as([100]u8, @splat('e')) },
     };
 
     // Test with various window sizes

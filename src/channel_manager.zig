@@ -242,8 +242,9 @@ pub const ChannelManager = struct {
     }
 
     fn channelTypeForModule(comptime module: type, comptime field_name: []const u8) type {
-        inline for (std.meta.declarations(module)) |decl| {
-            const candidate = @field(module, decl.name);
+        const mod_info = @typeInfo(module).@"struct";
+        inline for (mod_info.decl_names) |decl_name| {
+            const candidate = @field(module, decl_name);
             if (comptime @TypeOf(candidate) == type) {
                 const T = candidate;
                 if (comptime @hasDecl(T, "initFromConfig") and @hasDecl(T, "channel")) {
@@ -256,35 +257,37 @@ pub const ChannelManager = struct {
 
     /// Scan config, create channel instances, register in registry.
     pub fn collectConfiguredChannels(self: *ChannelManager) !void {
-        inline for (std.meta.fields(config_types.ChannelsConfig)) |field| {
-            if (comptime std.mem.eql(u8, field.name, "cli") or std.mem.eql(u8, field.name, "webhook")) {
+        const ch_info = @typeInfo(config_types.ChannelsConfig).@"struct";
+        inline for (ch_info.field_names, 0..) |field_name, i| {
+            const field_type = ch_info.field_types[i];
+            if (comptime std.mem.eql(u8, field_name, "cli") or std.mem.eql(u8, field_name, "webhook")) {
                 continue;
             }
-            if (comptime !channel_catalog.isBuildEnabledByKey(field.name)) {
+            if (comptime !channel_catalog.isBuildEnabledByKey(field_name)) {
                 continue;
             }
-            if (comptime !@hasDecl(channels_mod, field.name)) {
-                @compileError("channels/root.zig is missing module export for channel: " ++ field.name);
+            if (comptime !@hasDecl(channels_mod, field_name)) {
+                @compileError("channels/root.zig is missing module export for channel: " ++ field_name);
             }
 
-            switch (@typeInfo(field.type)) {
+            switch (@typeInfo(field_type)) {
                 .pointer => |ptr| {
                     if (ptr.size != .slice) continue;
-                    const items = @field(self.config.channels, field.name);
+                    const items = @field(self.config.channels, field_name);
                     for (items) |cfg| {
-                        try self.appendChannelFromConfig(field.name, cfg);
+                        try self.appendChannelFromConfig(field_name, cfg);
                     }
                 },
                 .optional => |opt| {
-                    if (@field(self.config.channels, field.name)) |cfg| {
+                    if (@field(self.config.channels, field_name)) |cfg| {
                         const inner = comptime blk: {
                             const info = @typeInfo(opt.child);
                             break :blk info == .pointer and info.pointer.size == .one;
                         };
                         if (inner) {
-                            try self.appendChannelFromConfig(field.name, cfg.*);
+                            try self.appendChannelFromConfig(field_name, cfg.*);
                         } else {
-                            try self.appendChannelFromConfig(field.name, cfg);
+                            try self.appendChannelFromConfig(field_name, cfg);
                         }
                     }
                 },
@@ -492,20 +495,20 @@ pub const ChannelManager = struct {
 // ════════════════════════════════════════════════════════════════════════════
 
 test "PollingState has telegram signal weixin matrix and max variants" {
-    try std.testing.expect(@intFromEnum(@as(std.meta.Tag(PollingState), .telegram)) !=
-        @intFromEnum(@as(std.meta.Tag(PollingState), .signal)));
-    try std.testing.expect(@intFromEnum(@as(std.meta.Tag(PollingState), .signal)) !=
-        @intFromEnum(@as(std.meta.Tag(PollingState), .weixin)));
-    try std.testing.expect(@intFromEnum(@as(std.meta.Tag(PollingState), .weixin)) !=
-        @intFromEnum(@as(std.meta.Tag(PollingState), .matrix)));
-    try std.testing.expect(@intFromEnum(@as(std.meta.Tag(PollingState), .matrix)) !=
-        @intFromEnum(@as(std.meta.Tag(PollingState), .max)));
+    try std.testing.expect(@backingInt(@as(std.meta.Tag(PollingState), .telegram)) !=
+        @backingInt(@as(std.meta.Tag(PollingState), .signal)));
+    try std.testing.expect(@backingInt(@as(std.meta.Tag(PollingState), .signal)) !=
+        @backingInt(@as(std.meta.Tag(PollingState), .weixin)));
+    try std.testing.expect(@backingInt(@as(std.meta.Tag(PollingState), .weixin)) !=
+        @backingInt(@as(std.meta.Tag(PollingState), .matrix)));
+    try std.testing.expect(@backingInt(@as(std.meta.Tag(PollingState), .matrix)) !=
+        @backingInt(@as(std.meta.Tag(PollingState), .max)));
 }
 
 test "ListenerType enum values distinct" {
-    try std.testing.expect(@intFromEnum(ListenerType.polling) != @intFromEnum(ListenerType.gateway_loop));
-    try std.testing.expect(@intFromEnum(ListenerType.gateway_loop) != @intFromEnum(ListenerType.webhook_only));
-    try std.testing.expect(@intFromEnum(ListenerType.webhook_only) != @intFromEnum(ListenerType.not_implemented));
+    try std.testing.expect(@backingInt(ListenerType.polling) != @backingInt(ListenerType.gateway_loop));
+    try std.testing.expect(@backingInt(ListenerType.gateway_loop) != @backingInt(ListenerType.webhook_only));
+    try std.testing.expect(@backingInt(ListenerType.webhook_only) != @backingInt(ListenerType.not_implemented));
 }
 
 test "isPollingSourceDuplicate detects duplicate signal source" {

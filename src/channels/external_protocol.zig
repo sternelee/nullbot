@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 const root = @import("root.zig");
 const config_types = @import("../config_types.zig");
 const json_util = @import("../json_util.zig");
@@ -522,9 +523,9 @@ fn isMethodNotFoundError(err_value: std.json.Value) bool {
     if (err_value.object.get("message")) |message_value| {
         if (message_value == .string) {
             const message = message_value.string;
-            return std.ascii.indexOfIgnoreCase(message, "method not found") != null or
-                std.ascii.indexOfIgnoreCase(message, "not implemented") != null or
-                std.ascii.indexOfIgnoreCase(message, "unknown method") != null;
+            return compat.indexOfIgnoreCase(message, "method not found") != null or
+                compat.indexOfIgnoreCase(message, "not implemented") != null or
+                compat.indexOfIgnoreCase(message, "unknown method") != null;
         }
     }
     return false;

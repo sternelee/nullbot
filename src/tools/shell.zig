@@ -1007,9 +1007,10 @@ test "validatePathEnvValue allows empty value" {
 
 test "shell path_env_vars passes validated vars to child" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const c = @cImport({
-        @cInclude("stdlib.h");
-    });
+    const c = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+    };
 
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -1020,9 +1021,9 @@ test "shell path_env_vars passes validated vars to child" {
     const libs_path = try std_compat.fs.path.join(std.testing.allocator, &.{ tmp_path, "mylibs" });
     defer std.testing.allocator.free(libs_path);
 
-    const key_z = try std.testing.allocator.dupeZ(u8, "TEST_LIB_PATH");
+    const key_z = try std.testing.allocator.dupeSentinel(u8, "TEST_LIB_PATH", 0);
     defer std.testing.allocator.free(key_z);
-    const value_z = try std.testing.allocator.dupeZ(u8, libs_path);
+    const value_z = try std.testing.allocator.dupeSentinel(u8, libs_path, 0);
     defer std.testing.allocator.free(value_z);
     try std.testing.expectEqual(@as(c_int, 0), c.setenv(key_z.ptr, value_z.ptr, 1));
     defer _ = c.unsetenv(key_z.ptr);
@@ -1043,9 +1044,10 @@ test "shell path_env_vars passes validated vars to child" {
 
 test "shell sandboxed path_env_vars ignore allowed_paths outside workspace" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const c = @cImport({
-        @cInclude("stdlib.h");
-    });
+    const c = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+    };
 
     var tmp_dir = std.testing.tmpDir(.{});
     defer tmp_dir.cleanup();
@@ -1063,9 +1065,9 @@ test "shell sandboxed path_env_vars ignore allowed_paths outside workspace" {
     defer std.testing.allocator.free(libs_path);
     try std_compat.fs.cwd().makePath(libs_path);
 
-    const key_z = try std.testing.allocator.dupeZ(u8, "TEST_LIB_PATH");
+    const key_z = try std.testing.allocator.dupeSentinel(u8, "TEST_LIB_PATH", 0);
     defer std.testing.allocator.free(key_z);
-    const value_z = try std.testing.allocator.dupeZ(u8, libs_path);
+    const value_z = try std.testing.allocator.dupeSentinel(u8, libs_path, 0);
     defer std.testing.allocator.free(value_z);
     try std.testing.expectEqual(@as(c_int, 0), c.setenv(key_z.ptr, value_z.ptr, 1));
     defer _ = c.unsetenv(key_z.ptr);

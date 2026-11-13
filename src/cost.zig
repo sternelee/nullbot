@@ -66,9 +66,30 @@ pub const pricing_table = [_]struct { []const u8, ModelPricing }{
     .{ "claude-3-haiku", .{ .input_usd_per_1m = 0.25, .output_usd_per_1m = 1.25 } },
 };
 
+fn toLowerByte(b: u8) u8 {
+    if (b >= 'A' and b <= 'Z') return b + ('a' - 'A');
+    return b;
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    for (0..haystack.len - needle.len + 1) |i| {
+        var matched = true;
+        for (0..needle.len) |j| {
+            if (toLowerByte(haystack[i + j]) != toLowerByte(needle[j])) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return true;
+    }
+    return false;
+}
+
 pub fn resolvePricing(model: []const u8) ModelPricing {
     for (pricing_table) |entry| {
-        if (std.ascii.indexOfIgnoreCase(model, entry[0]) != null) {
+        if (containsIgnoreCase(model, entry[0])) {
             return entry[1];
         }
     }

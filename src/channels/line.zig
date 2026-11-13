@@ -1189,7 +1189,7 @@ test "line parseWebhookEvents does not cache reply tokens" {
     defer resetReplyTokenCacheForTest();
 
     const allocator = std.testing.allocator;
-    const target = "U" ++ ("9" ** 32);
+    const target = "U" ++ (@as([32]u8, @splat('9')));
     const payload =
         \\{"events":[{"type":"message","replyToken":"parse_only_token","source":{"type":"user","userId":"
     ++ target ++
@@ -1215,7 +1215,7 @@ test "line reply token cache take consumes token" {
     resetReplyTokenCacheForTest();
     defer resetReplyTokenCacheForTest();
 
-    const target = "U" ++ ("8" ** 32);
+    const target = "U" ++ (@as([32]u8, @splat('8')));
     cacheReplyToken(target, "one_time_token");
 
     var token_buf: [MAX_REPLY_TOKEN_LEN]u8 = undefined;

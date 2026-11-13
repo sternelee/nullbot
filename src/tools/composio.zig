@@ -553,7 +553,9 @@ test "composio sanitizeErrorMessage truncates at 240 chars" {
     const alloc = std.testing.allocator;
     // Build a message longer than 240 chars using short words (< 20 chars each)
     // so they won't be redacted. "word " is 5 chars, 60 * 5 = 300 chars.
-    const long_msg = "word " ** 60;
+    var long_msg_buf: [300]u8 = @splat('w');
+    for (0..60) |i| std.mem.copyForwards(u8, long_msg_buf[i * 5 .. (i + 1) * 5], "word ");
+    const long_msg = long_msg_buf[0..];
     const result = try sanitizeErrorMessage(alloc, long_msg);
     defer alloc.free(result);
     try std.testing.expect(result.len == 243); // 240 + "..."

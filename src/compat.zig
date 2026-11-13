@@ -4,6 +4,35 @@ const shared = @import("compat/shared.zig");
 
 const Io = std.Io;
 const Allocator = std.mem.Allocator;
+/// Zig 0.17 compat: indexOfIgnoreCase was removed from std.ascii.
+pub fn toLowerByte(b: u8) u8 {
+    if (b >= 'A' and b <= 'Z') return b + ('a' - 'A');
+    return b;
+}
+
+pub fn indexOfIgnoreCase(haystack: []const u8, needle: []const u8) ?usize {
+    if (needle.len == 0) return @as(usize, 0);
+    if (needle.len > haystack.len) return null;
+    for (0..haystack.len - needle.len + 1) |i| {
+        var matched = true;
+        for (0..needle.len) |j| {
+            if (toLowerByte(haystack[i + j]) != toLowerByte(needle[j])) {
+                matched = false;
+                break;
+            }
+        }
+        if (matched) return i;
+    }
+    return null;
+}
+
+/// Zig 0.17 compat: bufPrintZ was removed from std.fmt.
+pub fn bufPrintZ(buf: []u8, comptime fmt: []const u8, args: anytype) ![:0]const u8 {
+    const slice = try std.fmt.bufPrint(buf, fmt, args);
+    if (slice.len >= buf.len) return error.BufferTooSmall;
+    buf[slice.len] = 0;
+    return buf[0..slice.len :0];
+}
 
 pub fn initProcess(init: std.process.Init) void {
     shared.initProcess(init);
@@ -181,7 +210,6 @@ pub const process = struct {
                 .environ_map = options.env_map,
                 .expand_arg0 = options.expand_arg0,
                 .create_no_window = options.create_no_window,
-                .disable_aslr = options.disable_aslr,
             });
         }
     };

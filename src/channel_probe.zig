@@ -51,9 +51,11 @@ fn fail(channel: []const u8, account: []const u8, reason: []const u8) ProbeResul
 }
 
 fn channelSupportsAccounts(channel_type: []const u8) bool {
-    inline for (std.meta.fields(config_mod.ChannelsConfig)) |field| {
-        if (std.mem.eql(u8, channel_type, field.name)) {
-            return switch (@typeInfo(field.type)) {
+    const ch_info = @typeInfo(config_mod.ChannelsConfig).@"struct";
+    inline for (ch_info.field_names, 0..) |field_name, i| {
+        const field_type = ch_info.field_types[i];
+        if (std.mem.eql(u8, channel_type, field_name)) {
+            return switch (@typeInfo(field_type)) {
                 .pointer => |ptr| ptr.size == .slice,
                 else => false,
             };

@@ -1,4 +1,5 @@
 const std = @import("std");
+const compat = @import("compat");
 
 /// Sandbox backend vtable interface for OS-level isolation.
 /// In Zig, we use a vtable pattern instead of Rust's trait objects.
@@ -145,9 +146,10 @@ test "SandboxBackend enum exhaustiveness" {
         "bubblewrap",
         "docker",
     };
-    const enum_fields = @typeInfo(SandboxBackend).@"enum".fields;
+    const enum_info = @typeInfo(SandboxBackend).@"enum";
+    const enum_fields = enum_info.field_names;
     try testing.expectEqual(expected_names.len, enum_fields.len);
     inline for (expected_names, 0..) |expected_name, i| {
-        try testing.expectEqualStrings(expected_name, enum_fields[i].name);
+        try testing.expectEqualStrings(expected_name, enum_fields[i]);
     }
 }

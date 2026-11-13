@@ -762,13 +762,13 @@ fn captureStatusDetail(status: *const CaptureStatus) []const u8 {
 }
 
 fn isSystemdUnavailableDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "systemctl --user unavailable") != null or
-        std.ascii.indexOfIgnoreCase(detail, "systemctl not available") != null or
-        std.ascii.indexOfIgnoreCase(detail, "failed to connect to bus") != null or
-        std.ascii.indexOfIgnoreCase(detail, "not been booted with systemd") != null or
-        std.ascii.indexOfIgnoreCase(detail, "system has not been booted with systemd") != null or
-        std.ascii.indexOfIgnoreCase(detail, "systemd user services are required") != null or
-        std.ascii.indexOfIgnoreCase(detail, "no such file or directory") != null;
+    return std_compat.indexOfIgnoreCase(detail, "systemctl --user unavailable") != null or
+        std_compat.indexOfIgnoreCase(detail, "systemctl not available") != null or
+        std_compat.indexOfIgnoreCase(detail, "failed to connect to bus") != null or
+        std_compat.indexOfIgnoreCase(detail, "not been booted with systemd") != null or
+        std_compat.indexOfIgnoreCase(detail, "system has not been booted with systemd") != null or
+        std_compat.indexOfIgnoreCase(detail, "systemd user services are required") != null or
+        std_compat.indexOfIgnoreCase(detail, "no such file or directory") != null;
 }
 
 const openrc_markers = [_][]const u8{
@@ -1109,44 +1109,44 @@ fn buildSysvinitScript(allocator: std.mem.Allocator, cfg: SysvinitScriptConfig) 
 }
 
 fn isSystemdUnitNotLoadedDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "unit nullclaw.service not loaded") != null or
-        std.ascii.indexOfIgnoreCase(detail, "could not be found") != null or
-        std.ascii.indexOfIgnoreCase(detail, "not loaded") != null;
+    return std_compat.indexOfIgnoreCase(detail, "unit nullclaw.service not loaded") != null or
+        std_compat.indexOfIgnoreCase(detail, "could not be found") != null or
+        std_compat.indexOfIgnoreCase(detail, "not loaded") != null;
 }
 
 fn isOpenRcServiceMissingDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "does not exist") != null or
-        std.ascii.indexOfIgnoreCase(detail, "not found") != null or
-        std.ascii.indexOfIgnoreCase(detail, "service `nullclaw'") != null;
+    return std_compat.indexOfIgnoreCase(detail, "does not exist") != null or
+        std_compat.indexOfIgnoreCase(detail, "not found") != null or
+        std_compat.indexOfIgnoreCase(detail, "service `nullclaw'") != null;
 }
 
 fn isOpenRcInactiveDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "stopped") != null or
-        std.ascii.indexOfIgnoreCase(detail, "not started") != null or
-        std.ascii.indexOfIgnoreCase(detail, "inactive") != null;
+    return std_compat.indexOfIgnoreCase(detail, "stopped") != null or
+        std_compat.indexOfIgnoreCase(detail, "not started") != null or
+        std_compat.indexOfIgnoreCase(detail, "inactive") != null;
 }
 
 fn openRcServiceState(detail: []const u8) []const u8 {
-    if (std.ascii.indexOfIgnoreCase(detail, "started") != null or
-        std.ascii.indexOfIgnoreCase(detail, "running") != null)
+    if (std_compat.indexOfIgnoreCase(detail, "started") != null or
+        std_compat.indexOfIgnoreCase(detail, "running") != null)
     {
         return "running";
     }
-    if (std.ascii.indexOfIgnoreCase(detail, "crashed") != null) return "crashed";
+    if (std_compat.indexOfIgnoreCase(detail, "crashed") != null) return "crashed";
     if (isOpenRcInactiveDetail(detail)) return "stopped";
     if (isOpenRcServiceMissingDetail(detail)) return "not installed";
     return "unknown";
 }
 
 fn isSysvinitInactiveDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "not running") != null or
-        std.ascii.indexOfIgnoreCase(detail, "no process in pidfile") != null or
-        std.ascii.indexOfIgnoreCase(detail, "not started") != null;
+    return std_compat.indexOfIgnoreCase(detail, "not running") != null or
+        std_compat.indexOfIgnoreCase(detail, "no process in pidfile") != null or
+        std_compat.indexOfIgnoreCase(detail, "not started") != null;
 }
 
 fn sysvinitServiceState(detail: []const u8) []const u8 {
-    if (std.ascii.indexOfIgnoreCase(detail, "is running") != null or
-        std.ascii.indexOfIgnoreCase(detail, "running (pid") != null)
+    if (std_compat.indexOfIgnoreCase(detail, "is running") != null or
+        std_compat.indexOfIgnoreCase(detail, "running (pid") != null)
     {
         return "running";
     }
@@ -1155,27 +1155,27 @@ fn sysvinitServiceState(detail: []const u8) []const u8 {
 }
 
 fn isWindowsServiceMissingDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "1060") != null or
-        std.ascii.indexOfIgnoreCase(detail, "does not exist as an installed service") != null or
-        std.ascii.indexOfIgnoreCase(detail, "service does not exist") != null;
+    return std_compat.indexOfIgnoreCase(detail, "1060") != null or
+        std_compat.indexOfIgnoreCase(detail, "does not exist as an installed service") != null or
+        std_compat.indexOfIgnoreCase(detail, "service does not exist") != null;
 }
 
 fn isWindowsServiceNotRunningDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "1062") != null or
-        std.ascii.indexOfIgnoreCase(detail, "service has not been started") != null;
+    return std_compat.indexOfIgnoreCase(detail, "1062") != null or
+        std_compat.indexOfIgnoreCase(detail, "service has not been started") != null;
 }
 
 fn isWindowsServiceAlreadyExistsDetail(detail: []const u8) bool {
-    return std.ascii.indexOfIgnoreCase(detail, "1073") != null or
-        std.ascii.indexOfIgnoreCase(detail, "already exists") != null;
+    return std_compat.indexOfIgnoreCase(detail, "1073") != null or
+        std_compat.indexOfIgnoreCase(detail, "already exists") != null;
 }
 
 fn windowsServiceState(query_output: []const u8) []const u8 {
-    if (std.ascii.indexOfIgnoreCase(query_output, "RUNNING") != null) return "running";
-    if (std.ascii.indexOfIgnoreCase(query_output, "STOPPED") != null) return "stopped";
-    if (std.ascii.indexOfIgnoreCase(query_output, "START_PENDING") != null) return "start_pending";
-    if (std.ascii.indexOfIgnoreCase(query_output, "STOP_PENDING") != null) return "stop_pending";
-    if (std.ascii.indexOfIgnoreCase(query_output, "PAUSED") != null) return "paused";
+    if (std_compat.indexOfIgnoreCase(query_output, "RUNNING") != null) return "running";
+    if (std_compat.indexOfIgnoreCase(query_output, "STOPPED") != null) return "stopped";
+    if (std_compat.indexOfIgnoreCase(query_output, "START_PENDING") != null) return "start_pending";
+    if (std_compat.indexOfIgnoreCase(query_output, "STOP_PENDING") != null) return "stop_pending";
+    if (std_compat.indexOfIgnoreCase(query_output, "PAUSED") != null) return "paused";
     return "unknown";
 }
 

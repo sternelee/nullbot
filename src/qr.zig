@@ -621,7 +621,7 @@ test "encode medium URL selects appropriate version" {
 }
 
 test "encode returns error for data too long" {
-    const long = "A" ** 200;
+    const long = &@as([200]u8, @splat('A'));
     try testing.expectError(error.DataTooLong, encode(long));
 }
 

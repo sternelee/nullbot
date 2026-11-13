@@ -263,9 +263,11 @@ fn applyProvidersFromArray(cfg: *Config, items: []const std.json.Value) !void {
 }
 
 fn channelSupportsAccounts(channel_type: []const u8) bool {
-    inline for (std.meta.fields(config_mod.ChannelsConfig)) |field| {
-        if (std.mem.eql(u8, channel_type, field.name)) {
-            return switch (@typeInfo(field.type)) {
+    const info = @typeInfo(config_mod.ChannelsConfig).@"struct";
+    inline for (info.field_names, 0..) |field_name, i| {
+        const field_type = info.field_types[i];
+        if (std.mem.eql(u8, channel_type, field_name)) {
+            return switch (@typeInfo(field_type)) {
                 .pointer => |ptr| ptr.size == .slice,
                 else => false,
             };
@@ -275,8 +277,9 @@ fn channelSupportsAccounts(channel_type: []const u8) bool {
 }
 
 fn channelExistsInConfig(channel_type: []const u8) bool {
-    inline for (std.meta.fields(config_mod.ChannelsConfig)) |field| {
-        if (std.mem.eql(u8, channel_type, field.name)) return true;
+    const info = @typeInfo(config_mod.ChannelsConfig).@"struct";
+    inline for (info.field_names) |field_name| {
+        if (std.mem.eql(u8, channel_type, field_name)) return true;
     }
     return false;
 }

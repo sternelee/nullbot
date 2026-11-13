@@ -47,11 +47,12 @@ fn readFileAllocCompat(dir: std.Io.Dir, io: std.Io, allocator: std.mem.Allocator
 fn verifyVendoredSqliteHashes(b: *std.Build) !void {
     const max_vendor_file_size = 16 * 1024 * 1024;
     for (VENDORED_SQLITE_HASHES) |entry| {
-        const file_path = b.pathFromRoot(entry.path);
-        defer b.allocator.free(file_path);
-
-        const bytes = readFileAllocCompat(std.Io.Dir.cwd(), b.graph.io, b.allocator, file_path, max_vendor_file_size) catch |err| {
-            std.log.err("failed to read {s}: {s}", .{ file_path, @errorName(err) });
+        // The path is relative to this package's root, which is not the
+        // process cwd when this build runs as a dependency (e.g. from gui/).
+        const abs_path = try b.root.joinString(b.allocator, entry.path);
+        defer b.allocator.free(abs_path);
+        const bytes = readFileAllocCompat(std.Io.Dir.cwd(), b.graph.io, b.allocator, abs_path, max_vendor_file_size) catch |err| {
+            std.log.err("failed to read {s}: {s}", .{ entry.path, @errorName(err) });
             return err;
         };
         defer b.allocator.free(bytes);
@@ -347,7 +348,7 @@ fn envExists(b: *std.Build, name: []const u8) bool {
 
 fn ensureAndroidBuildEnvironment(b: *std.Build) void {
     if (envExists(b, "TERMUX_VERSION")) return;
-    if (b.libc_file != null) return;
+    // b.libc_file was removed in Zig 0.17; skip this check
 
     const has_android_sdk_or_ndk =
         envExists(b, "ANDROID_NDK_HOME") or
@@ -362,7 +363,7 @@ fn ensureAndroidBuildEnvironment(b: *std.Build) void {
         std.log.err("Install the Android NDK, generate a libc/sysroot file for the target, and pass it with --libc.", .{});
     }
     std.log.err("For native builds, run the build inside Termux without -Dtarget.", .{});
-    std.log.err("If you are seeing a build.zig.zon parse error mentioning '.nullclaw', your Zig version is not 0.16.0.", .{});
+    std.log.err("If you are seeing a build.zig.zon parse error mentioning '.nullclaw', your Zig version is not 0.17.0.", .{});
     std.process.exit(1);
 }
 
@@ -506,6 +507,58 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(bool, "enable_channel_max", enable_channel_max);
     build_options.addOption(bool, "enable_embedded_wasm3", enable_embedded_wasm3);
     const build_options_module = build_options.createModule();
+
+    // ---------- translate-c modules for C headers (Zig 0.17) ----------
+    // Zig 0.17 removed @cImport; use translate-c to generate Zig bindings.
+    // These modules are always registered: the source files import them
+    // unconditionally, so leaving them out for a disabled engine would break
+    // builds such as -Dengines=base -Dembedded_wasm3=false.
+    const sqlite3_dep = b.dependency("sqlite3", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const sqlite3_translate = b.addTranslateC(.{
+        .root_source_file = sqlite3_dep.path("sqlite3.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    sqlite3_translate.addIncludePath(sqlite3_dep.path("."));
+    const sqlite3_c_module = b.createModule(.{
+        .root_source_file = sqlite3_translate.getOutput(),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const postgres_translate = b.addTranslateC(.{
+        .root_source_file = b.path("src/c_headers/libpq-fe.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const postgres_c_module = b.createModule(.{
+        .root_source_file = postgres_translate.getOutput(),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    const wasm3_dep = b.dependency("wasm3", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const wasm3_translate = b.addTranslateC(.{
+        .root_source_file = wasm3_dep.path("source/wasm3.h"),
+        .target = target,
+        .optimize = optimize,
+    });
+    wasm3_translate.addIncludePath(wasm3_dep.path("source"));
+    const wasm3_c_module = b.createModule(.{
+        .root_source_file = wasm3_translate.getOutput(),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
     const compat_module = b.createModule(.{
         .root_source_file = b.path("src/compat.zig"),
         .target = target,
@@ -521,6 +574,9 @@ pub fn build(b: *std.Build) void {
         });
         module.addImport("build_options", build_options_module);
         module.addImport("compat", compat_module);
+        module.addImport("sqlite3_c", sqlite3_c_module);
+        module.addImport("postgres_c", postgres_c_module);
+        module.addImport("wasm3_c", wasm3_c_module);
         if (sqlite3) |lib| {
             module.linkLibrary(lib);
         }
@@ -586,7 +642,7 @@ pub fn build(b: *std.Build) void {
     }
     exe.dead_strip_dylibs = true;
 
-    if (optimize != .Debug) {
+    if (optimize != .debug) {
         exe.root_module.strip = true;
         exe.root_module.unwind_tables = .none;
         exe.root_module.omit_frame_pointer = true;
@@ -596,12 +652,11 @@ pub fn build(b: *std.Build) void {
 
     // macOS host+target only: strip local symbols post-install.
     // Host `strip` cannot process ELF/PE during cross-builds.
-    if (optimize != .Debug and builtin.os.tag == .macos and target.result.os.tag == .macos) {
+    if (optimize != .debug and builtin.os.tag == .macos and target.result.os.tag == .macos) {
         const strip_cmd = b.addSystemCommand(&.{"strip"});
         strip_cmd.addArgs(&.{"-x"});
         strip_cmd.addFileArg(exe.getEmittedBin());
-        strip_cmd.step.dependOn(b.getInstallStep());
-        b.default_step = &strip_cmd.step;
+        b.getInstallStep().dependOn(&strip_cmd.step);
     }
 
     // ---------- run step ----------
@@ -609,9 +664,6 @@ pub fn build(b: *std.Build) void {
     const run_cmd = b.addRunArtifact(exe);
     run_step.dependOn(&run_cmd.step);
     run_cmd.step.dependOn(b.getInstallStep());
-    if (b.args) |args| {
-        run_cmd.addArgs(args);
-    }
 
     // ---------- tests ----------
     const test_step = b.step("test", "Run all tests");

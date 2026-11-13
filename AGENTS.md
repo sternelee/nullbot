@@ -53,11 +53,20 @@ These codebase realities should drive every design decision:
    - `src/gateway.zig`, `src/security/`, `src/tools/`, `src/runtime.zig` carry high blast radius.
    - Defaults are secure-by-default (pairing, HTTPS-only, allowlists, AEAD encryption). Keep it that way.
 
-4. **Zig 0.16.0 API is the baseline — no newer features**
+4. **Zig 0.17.0 API is the baseline — no newer features**
+   - `@cImport` is removed: C headers are translated with `b.addTranslateC()` in `build.zig` and imported as Zig modules (`sqlite3_c`, `postgres_c`, `wasm3_c`). Simple libc calls use explicit `extern "c"` declarations.
+   - The `**` array/string repetition operator is removed: use `@as([N]T, @splat(value))` (add `&` when a slice is needed).
+   - `allocator.dupeZ(u8, s)` is replaced by `allocator.dupeSentinel(u8, s, 0)`.
+   - `std.fmt.bufPrintZ` is removed: use `compat.bufPrintZ` (null-terminating wrapper).
+   - `std.ascii.indexOfIgnoreCase` is removed: use `compat.indexOfIgnoreCase`.
+   - `std.meta.fields` is deprecated: use `@typeInfo(T).@"struct".field_names` / `field_types` / `decl_names`, and `@"enum".field_names`.
+   - `std.heap.memory_pool.Managed` is removed: use `std.heap.MemoryPool(T)` with `.empty`, `create(&pool, allocator)`, `destroy(&pool, ptr)`, `deinit(&pool, allocator)`.
+   - `std.Uri.getHost` is removed: use `std.Io.net.HostName.fromUri(uri, &buf)`.
+   - `std.Io.VTable.netRead`/`netWrite` are removed: use `io.operate(.{ .net_read = … })` / `.net_write`, or POSIX `read`/`write` for pipe-compatible transports.
    - HTTP client: `std.http.Client.fetch()` with `std.Io.Writer.Allocating` for response body capture.
-   - Child processes: `std.process.Child.init(argv, allocator)`, `.Pipe` (capitalized).
+   - Child processes: `std.process.run` / `std.process.spawn` via `compat.process.Child`.
    - stdout: `std.fs.File.stdout().writer(&buf)` → use `.interface` for `print`/`flush`.
-   - `std.io.getStdOut()` does NOT exist in the current Zig stdlib — use `std.fs.File.stdout()`.
+   - `std.io.getStdOut()` does NOT exist — use `std.fs.File.stdout()`.
    - SQLite: linked via `/opt/homebrew/opt/sqlite/{lib,include}` on the compile step, not the module.
    - `ArrayListUnmanaged`: init with `.empty`, pass allocator to every method.
 
@@ -216,13 +225,13 @@ Whenever a documentation or code change indicates that the required Zig
 toolchain version is changing (for example: `README.md`, `AGENTS.md`,
 `CLAUDE.md`, `docs/**/installation.md`, `docs/**/development.md`,
 `docs/**/termux.md`, `flake.nix`, `Dockerfile`, `.github/workflows/**`, or any
-`zig version` / "Zig 0.16.0" string in the repo), the per-distro install
+`zig version` / "Zig 0.17.0" string in the repo), the per-distro install
 guides must be updated in the same change so they keep matching the pinned
 version.
 
 Required steps:
 
-1. Identify the new pinned Zig version (e.g. `0.16.1`, `0.17.0`).
+1. Identify the new pinned Zig version (e.g. `0.17.1`, `0.18.0`).
 2. Visit `https://ziglang.org/download/` and locate the section for that exact
    version. Do not guess URLs — fetch them from the official download page so
    the filename, archive layout, and presence of the build are confirmed.
@@ -318,7 +327,8 @@ To bypass a hook in an emergency: `git commit --no-verify` / `git push --no-veri
 
 - Do not add C dependencies or large Zig packages without strong justification (binary size impact).
 - Do not return vtable interfaces pointing to temporaries — dangling pointer.
-- Do not use `std.io.getStdOut()` — it does not exist in Zig 0.16.
+- Do not use `std.io.getStdOut()` — it does not exist in Zig 0.17.
+- Do not reintroduce `@cImport`, `**` repetition, `dupeZ`, `bufPrintZ`, or `std.meta.fields` — they were removed in Zig 0.17.
 - Do not silently weaken security policy or access constraints.
 - Do not add speculative config/feature flags "just in case".
 - Do not skip `defer allocator.free(...)` — every allocation must be freed.
@@ -346,5 +356,5 @@ When working in fast iterative mode:
 - Validate assumptions with code search before implementing.
 - Prefer deterministic behavior over clever shortcuts.
 - Do not "ship and hope" on security-sensitive paths.
-- If uncertain about Zig 0.16 API, check `src/` for existing usage patterns before guessing.
+- If uncertain about Zig 0.17 API, check `src/` for existing usage patterns before guessing.
 - If uncertain about architecture, read the vtable interface definition before implementing.

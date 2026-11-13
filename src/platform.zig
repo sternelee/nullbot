@@ -2,9 +2,9 @@ const std = @import("std");
 const std_compat = @import("compat");
 const builtin = @import("builtin");
 
-const env_c = @cImport({
-    @cInclude("stdlib.h");
-});
+extern "c" fn _putenv_s(name: [*:0]const u8, value: [*:0]const u8) c_int;
+extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+extern "c" fn unsetenv(name: [*:0]const u8) c_int;
 
 /// Cross-platform wrapper over std_compat.process.getEnvVarOwned that returns
 /// null instead of error.EnvironmentVariableNotFound.
@@ -20,20 +20,20 @@ pub fn getEnvOrNull(allocator: std.mem.Allocator, name: []const u8) ?[]const u8 
 /// Sets or unsets a process environment variable.
 /// Passing null removes the variable on POSIX and clears it on Windows.
 pub fn setProcessEnv(allocator: std.mem.Allocator, name: []const u8, value: ?[]const u8) !void {
-    const name_z = try allocator.dupeZ(u8, name);
+    const name_z = try allocator.dupeSentinel(u8, name, 0);
     defer allocator.free(name_z);
 
     const rc: c_int = if (value) |env_value| blk: {
-        const value_z = try allocator.dupeZ(u8, env_value);
+        const value_z = try allocator.dupeSentinel(u8, env_value, 0);
         defer allocator.free(value_z);
         break :blk if (comptime builtin.os.tag == .windows)
-            env_c._putenv_s(name_z.ptr, value_z.ptr)
+            _putenv_s(name_z.ptr, value_z.ptr)
         else
-            env_c.setenv(name_z.ptr, value_z.ptr, 1);
+            setenv(name_z.ptr, value_z.ptr, 1);
     } else if (comptime builtin.os.tag == .windows)
-        env_c._putenv_s(name_z.ptr, "")
+        _putenv_s(name_z.ptr, "")
     else
-        env_c.unsetenv(name_z.ptr);
+        unsetenv(name_z.ptr);
 
     if (rc != 0) return error.EnvMutationFailed;
 }

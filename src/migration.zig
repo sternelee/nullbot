@@ -732,13 +732,13 @@ test "contentEqual: different lengths" {
 }
 
 test "contentEqual: identical long strings use hash path" {
-    const long = "x" ** 128;
+    const long = &@as([128]u8, @splat('x'));
     try std.testing.expect(contentEqual(long, long));
 }
 
 test "contentEqual: different long strings" {
-    const a = "a" ** 128;
-    const b = "b" ** 128;
+    const a = &@as([128]u8, @splat('a'));
+    const b = &@as([128]u8, @splat('b'));
     try std.testing.expect(!contentEqual(a, b));
 }
 

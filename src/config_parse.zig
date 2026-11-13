@@ -850,9 +850,11 @@ fn coerceIntegerStringListFields(
     if (value.* != .object) return false;
 
     var changed = false;
-    inline for (std.meta.fields(T)) |field| {
-        if (comptime isStringList(field.type)) {
-            if (value.object.getPtr(field.name)) |field_value| {
+    const t_info = @typeInfo(T).@"struct";
+    inline for (t_info.field_names, 0..) |field_name, i| {
+        const field_type = t_info.field_types[i];
+        if (comptime isStringList(field_type)) {
+            if (value.object.getPtr(field_name)) |field_value| {
                 changed = (try coerceIntegerArrayItemsToStrings(allocator, field_value)) or changed;
             }
         }
@@ -1054,24 +1056,26 @@ fn parseChannels(self: *Config, channels_value: std.json.Value) !void {
         if (v == .bool) self.channels.cli = v.bool;
     }
 
-    inline for (std.meta.fields(types.ChannelsConfig)) |field| {
-        if (comptime std.mem.eql(u8, field.name, "cli")) continue;
-        if (comptime std.mem.eql(u8, field.name, "external")) {
-            if (channels_obj.get(field.name)) |channel_value| {
+    const channels_info = @typeInfo(types.ChannelsConfig).@"struct";
+    inline for (channels_info.field_names, 0..) |field_name, i| {
+        if (comptime std.mem.eql(u8, field_name, "cli")) continue;
+        if (comptime std.mem.eql(u8, field_name, "external")) {
+            if (channels_obj.get(field_name)) |channel_value| {
                 const parsed = try parseExternalChannels(self, channel_value);
                 if (parsed.len > 0) {
                     self.channels.external = parsed;
                 }
             }
         } else {
-            if (channels_obj.get(field.name)) |channel_value| {
-                switch (@typeInfo(field.type)) {
+            const ft = channels_info.field_types[i];
+            if (channels_obj.get(field_name)) |channel_value| {
+                switch (@typeInfo(ft)) {
                     .pointer => |ptr| {
                         if (ptr.size == .slice) {
                             const Elem = ptr.child;
                             const parsed = try parseMultiAccountChannel(Elem, self.allocator, channel_value);
                             if (parsed.len > 0) {
-                                @field(self.channels, field.name) = parsed;
+                                @field(self.channels, field_name) = parsed;
                             }
                         }
                     },
@@ -1084,15 +1088,15 @@ fn parseChannels(self: *Config, channels_value: std.json.Value) !void {
                             if (parseInlineChannel(Pointee, self.allocator, channel_value)) |parsed| {
                                 const ptr = try self.allocator.create(Pointee);
                                 ptr.* = parsed;
-                                @field(self.channels, field.name) = ptr;
+                                @field(self.channels, field_name) = ptr;
                             }
                         } else if (comptime @hasField(Child, "account_id")) {
                             if (try parseSingleAccountChannel(Child, self.allocator, channel_value)) |parsed| {
-                                @field(self.channels, field.name) = parsed;
+                                @field(self.channels, field_name) = parsed;
                             }
                         } else {
                             if (parseInlineChannel(Child, self.allocator, channel_value)) |parsed| {
-                                @field(self.channels, field.name) = parsed;
+                                @field(self.channels, field_name) = parsed;
                             }
                         }
                     },

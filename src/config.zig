@@ -360,8 +360,9 @@ pub const Config = struct {
     }
 
     fn isReservedRuntimeChannelName(runtime_name: []const u8) bool {
-        inline for (std.meta.fields(config_types.ChannelsConfig)) |field| {
-            if (std.mem.eql(u8, field.name, runtime_name)) return true;
+        const info = @typeInfo(config_types.ChannelsConfig).@"struct";
+        inline for (info.field_names) |field_name| {
+            if (std.mem.eql(u8, field_name, runtime_name)) return true;
         }
         return false;
     }
@@ -735,12 +736,14 @@ pub const Config = struct {
             wrote_any = true;
         }
 
-        inline for (std.meta.fields(ChannelsConfig)) |field| {
-            if (comptime std.mem.eql(u8, field.name, "cli")) continue;
-            if (comptime std.mem.eql(u8, field.name, "nostr")) continue;
+        const ch_info = @typeInfo(ChannelsConfig).@"struct";
+        inline for (ch_info.field_names, 0..) |field_name, i| {
+            const field_type = ch_info.field_types[i];
+            if (comptime std.mem.eql(u8, field_name, "cli")) continue;
+            if (comptime std.mem.eql(u8, field_name, "nostr")) continue;
 
-            const channel_value = @field(self.channels, field.name);
-            if (comptime std.mem.eql(u8, field.name, "external")) {
+            const channel_value = @field(self.channels, field_name);
+            if (comptime std.mem.eql(u8, field_name, "external")) {
                 if (channel_value.len > 0) {
                     try writeChannelFieldSeparator(w, wrote_any);
                     try self.writeExternalChannelAccounts(w, channel_value);
@@ -748,18 +751,18 @@ pub const Config = struct {
                 }
                 continue;
             }
-            switch (@typeInfo(field.type)) {
+            switch (@typeInfo(field_type)) {
                 .pointer => |ptr| {
                     if (ptr.size == .slice and channel_value.len > 0) {
                         try writeChannelFieldSeparator(w, wrote_any);
-                        try writeChannelAccounts(self.allocator, w, field.name, channel_value);
+                        try writeChannelAccounts(self.allocator, w, field_name, channel_value);
                         wrote_any = true;
                     }
                 },
                 .optional => {
                     if (channel_value) |val| {
                         try writeChannelFieldSeparator(w, wrote_any);
-                        try w.print("    \"{s}\": ", .{field.name});
+                        try w.print("    \"{s}\": ", .{field_name});
                         try writePrettyJsonInline(self.allocator, w, val, "    ");
                         wrote_any = true;
                     }
@@ -4545,9 +4548,10 @@ test "save roundtrip preserves tools customization schema" {
 
 test "load merges relative tool_customizations_file with inline customizations" {
     if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
-    const c = @cImport({
-        @cInclude("stdlib.h");
-    });
+    const c = struct {
+        extern "c" fn setenv(name: [*:0]const u8, value: [*:0]const u8, overwrite: c_int) c_int;
+        extern "c" fn unsetenv(name: [*:0]const u8) c_int;
+    };
 
     const allocator = std.testing.allocator;
     var tmp = std.testing.tmpDir(.{});
@@ -4576,9 +4580,9 @@ test "load merges relative tool_customizations_file with inline customizations" 
 
     const home = try tmp_dir.realpathAlloc(allocator, "home");
     defer allocator.free(home);
-    const key_z = try allocator.dupeZ(u8, "NULLCLAW_HOME");
+    const key_z = try allocator.dupeSentinel(u8, "NULLCLAW_HOME", 0);
     defer allocator.free(key_z);
-    const home_z = try allocator.dupeZ(u8, home);
+    const home_z = try allocator.dupeSentinel(u8, home, 0);
     defer allocator.free(home_z);
     try std.testing.expectEqual(@as(c_int, 0), c.setenv(key_z.ptr, home_z.ptr, 1));
     defer _ = c.unsetenv(key_z.ptr);
@@ -7965,7 +7969,7 @@ test "save includes nostr channel when configured" {
         .allocator = allocator,
     };
 
-    const owner_pubkey = "a" ** 64;
+    const owner_pubkey = &@as([64]u8, @splat('a'));
     var ns_cfg = NostrConfig{
         .private_key = "enc2:abc",
         .owner_pubkey = owner_pubkey,
@@ -8012,7 +8016,7 @@ test "save includes dm_relays in nostr section" {
     };
     var ns_cfg = config_types.NostrConfig{
         .private_key = "enc2:abc",
-        .owner_pubkey = "a" ** 64,
+        .owner_pubkey = &@as([64]u8, @splat('a')),
         .dm_relays = &.{ "wss://auth.nostr1.com", "wss://relay.damus.io" },
     };
     cfg.channels.nostr = &ns_cfg;
@@ -8041,7 +8045,7 @@ test "dm_relays round-trips through save and load" {
     };
     var ns_cfg = config_types.NostrConfig{
         .private_key = "enc2:abc",
-        .owner_pubkey = "a" ** 64,
+        .owner_pubkey = &@as([64]u8, @splat('a')),
         .dm_relays = &.{ "wss://auth.nostr1.com", "wss://relay.damus.io" },
     };
     cfg.channels.nostr = &ns_cfg;
@@ -8081,7 +8085,7 @@ test "nostr display_name with special chars round-trips correctly" {
     };
     var ns_cfg = config_types.NostrConfig{
         .private_key = "enc2:abc",
-        .owner_pubkey = "a" ** 64,
+        .owner_pubkey = &@as([64]u8, @splat('a')),
         .display_name = "Bot \"NullClaw\" v1",
         .about = "Line1\nLine2",
     };
@@ -8198,7 +8202,7 @@ test "parse nostr channel missing required fields yields null" {
 test "NostrConfig dm_relays default is auth.nostr1.com" {
     const cfg = config_types.NostrConfig{
         .private_key = "enc2:x",
-        .owner_pubkey = "a" ** 64,
+        .owner_pubkey = &@as([64]u8, @splat('a')),
     };
     try std.testing.expectEqual(@as(usize, 1), cfg.dm_relays.len);
     try std.testing.expectEqualStrings("wss://auth.nostr1.com", cfg.dm_relays[0]);

@@ -297,7 +297,9 @@ test "appendDraftChunk stays quiet while suppressed" {
 }
 
 test "buildTransportText compacts long draft into progress preview" {
-    const long_text = "abcdef" ** 700;
+    var long_buf: [4200]u8 = @splat('a');
+    for (0..700) |i| std.mem.copyForwards(u8, long_buf[i * 6 .. (i + 1) * 6], "abcdef");
+    const long_text = long_buf[0..];
     const compact = try buildTransportText(std.testing.allocator, long_text, 1_000, 16_000);
     defer std.testing.allocator.free(compact);
 
@@ -308,7 +310,7 @@ test "buildTransportText compacts long draft into progress preview" {
 }
 
 test "buildTransportText strips think blocks from compact excerpt" {
-    const long_text = ("a" ** 2900) ++ "<think>private</think>" ++ ("b" ** 400);
+    const long_text = (@as([2900]u8, @splat('a'))) ++ "<think>private</think>" ++ (@as([400]u8, @splat('b')));
     const compact = try buildTransportText(std.testing.allocator, long_text, 1_000, 16_000);
     defer std.testing.allocator.free(compact);
 

@@ -280,7 +280,7 @@ test "sanitizeApiError keeps UTF-8 intact when truncating" {
     try setApiErrorLimitOverride(200);
     defer setApiErrorLimitOverride(null) catch unreachable;
 
-    const prefix = "a" ** 199;
+    const prefix = &@as([199]u8, @splat('a'));
     const result = try sanitizeApiError(allocator, prefix ++ "\xd0\x99tail");
     defer allocator.free(result);
 
@@ -415,7 +415,7 @@ test "scrubToolOutput truncates long output" {
 
 test "scrubToolOutput keeps UTF-8 intact when truncating" {
     const allocator = std.testing.allocator;
-    const prefix = "x" ** (MAX_TOOL_OUTPUT_CHARS - 1);
+    const prefix = &@as([MAX_TOOL_OUTPUT_CHARS - 1]u8, @splat('x'));
     const result = try scrubToolOutput(allocator, prefix ++ "\xd0\x99tail");
     defer allocator.free(result);
 
