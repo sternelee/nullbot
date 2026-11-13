@@ -85,6 +85,12 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "05-expanded");
 
+    // The diagnostics panel, over the chat.
+    w.app.diagnostics_open = true;
+    w.tester.settle(0.5);
+    try shoot(&w, "07-diagnostics");
+    w.app.diagnostics_open = false;
+
     // The complaint path, with a runtime that answers nothing — the toast is the
     // one the window really shows, not one typed into the state.
     var path_buffer_2: [256]u8 = undefined;

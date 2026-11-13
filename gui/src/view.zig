@@ -9,6 +9,7 @@ const std = @import("std");
 const ui = @import("nanoui").ui;
 const kit = @import("nanoui").kit;
 const backend = @import("backend.zig");
+const theme = @import("theme.zig");
 const md = @import("md.zig");
 const state = @import("state.zig");
 
@@ -59,6 +60,104 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
     sessionsHeading(s, c);
     sessionList(s, c);
     nav(s, c);
+    themeSwitcher(s, c);
+}
+
+/// The palette picker, at the foot of the sidebar. The web client puts it in
+/// its status bar; here the status bar is the page header, which belongs to
+/// the page, so the sidebar's own foot is where a window-wide setting goes.
+fn themeSwitcher(s: *AppState, c: *ui.Context) void {
+    _ = c.leaf(.{
+        .width = .fill,
+        .height = .{ .px = 1 },
+        .background = s.palette.border,
+    }, .none, null);
+
+    const wrap = ui.div(c).column().wFull().p(8).gap(4);
+    defer wrap.end();
+
+    {
+        const row = ui.div(c).row().wFull().gap(6).itemsCenter();
+        defer row.end();
+        var picked: ?usize = @as(?usize, s.palette_index);
+        const names = comptime blk: {
+            var out: [theme.choices.len][]const u8 = undefined;
+            for (theme.choices, 0..) |choice, i| out[i] = choice.name;
+            break :blk out;
+        };
+        if (kit.select(c, "palette", &names, &picked, .{
+            .placeholder = "Theme…",
+            .width = sidebar_width - 16 - 34,
+        })) {
+            if (picked) |i| s.setPalette(i);
+        }
+        if (kit.iconButton(c, "info.circle", .{ .size = .sm }).clicked) {
+            s.diagnostics_open = true;
+        }
+    }
+}
+
+/// What the window knows about itself: where it looks for the runtime, which
+/// session is open, and what the managed gateway is doing. Every line is read
+/// from state — nothing here is a placeholder for a value the runtime has not
+/// given us.
+fn diagnosticsPanel(s: *AppState, c: *ui.Context) void {
+    var open = s.diagnostics_open;
+    defer s.diagnostics_open = open;
+    const d = kit.dialog(c, "diagnostics", &open, .{
+        .title = "Diagnostics",
+        .description = "What this window is connected to, and where it reads from.",
+        .width = 520,
+        .ok = "",
+        .cancel = "Close",
+    }) orelse return;
+    defer _ = d.end();
+
+    diagLine(s, c, "Runtime", s.exe, true);
+    diagLine(s, c, "Config", s.paths.config, true);
+    diagLine(s, c, "Workspace", s.paths.workspace, true);
+    kit.separator(c, .{});
+    diagLine(s, c, "Gateway", if (s.daemon.running()) "running" else "stopped", false);
+    diagLine(s, c, "Session", sessionKey(s) orelse "none selected", true);
+    diagLine(s, c, "Turns", turnCount(s, c), false);
+    kit.separator(c, .{});
+    diagLine(s, c, "Theme", theme.choices[s.palette_index].name, false);
+}
+
+fn sessionKey(s: *AppState) ?[]const u8 {
+    const i = s.selected orelse return null;
+    if (i >= s.sessions.items.len) return null;
+    return s.sessions.items[i].key;
+}
+
+/// The selected session's turn count, formatted into the frame's memory: the
+/// view is rebuilt every frame, and a string allocated on the app's allocator
+/// here would be a leak per frame.
+fn turnCount(s: *AppState, c: *ui.Context) []const u8 {
+    const i = s.selected orelse return "—";
+    if (i >= s.sessions.items.len) return "—";
+    return std.fmt.allocPrint(c.alloc(), "{d}", .{s.sessions.items[i].turns()}) catch "—";
+}
+
+/// One `Label   value` row of the diagnostics panel.
+fn diagLine(s: *AppState, c: *ui.Context, label: []const u8, value: []const u8, mono: bool) void {
+    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
+    defer row.end();
+    {
+        const slot = ui.div(c).w(84).minW(84);
+        defer slot.end();
+        ui.text(c, label, .{ .size = 11.5, .color = s.palette.faint });
+    }
+    {
+        const slot = ui.div(c).grow().minW(0);
+        defer slot.end();
+        clipped(c, value, .{
+            .size = 11.5,
+            .color = s.palette.text,
+            .mono = mono,
+            .truncate = .middle,
+        });
+    }
 }
 
 fn brand(s: *AppState, c: *ui.Context) void {
@@ -208,6 +307,7 @@ fn body(s: *AppState, c: *ui.Context) void {
         else => jsonPage(s, c),
     }
     banner(s, c);
+    diagnosticsPanel(s, c);
 }
 
 fn header(s: *AppState, c: *ui.Context) void {
@@ -342,6 +442,20 @@ fn messageBubble(s: *AppState, c: *ui.Context, message: backend.Message, doc: ?*
         }
     } else {
         ui.text(c, message.content, .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.4 });
+    }
+
+    // The stamp the runtime recorded, when it recorded one. A message the
+    // window made up (a failed turn, a local note) has none, and inventing
+    // one would say the runtime wrote it.
+    if (message.created_at.len > 0) {
+        const foot = ui.div(c).row().wFull().gap(6).itemsCenter();
+        defer foot.end();
+        if (is_user) ui.spacer(c);
+        ui.text(c, backend.formatStamp(c.alloc(), message.created_at), .{
+            .size = 10,
+            .color = s.palette.faint,
+            .tabular = true,
+        });
     }
 }
 
@@ -858,6 +972,39 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
         const card = configCard(c, s);
         defer card.end();
         autonomyField(s, c);
+    }
+    {
+        const section = configSection(c, s, "Memory", "Where turns are stored, and whether the agent writes to it on its own.");
+        defer section.end();
+        const card = configCard(c, s);
+        defer card.end();
+        memoryField(s, c);
+        toggleField(s, c, "Auto-save turns", "Writes `memory.auto_save`. Off keeps a session in memory only.", &s.cfg_memory_auto_save);
+    }
+    {
+        const section = configSection(c, s, "Reliability", "What happens when a provider call fails.");
+        defer section.end();
+        const card = configCard(c, s);
+        defer card.end();
+        formField(s, c, "Provider retries", "Writes `reliability.provider_retries`.", "2", &s.cfg_retries);
+        formField(s, c, "Backoff", "Milliseconds between tries, `reliability.provider_backoff_ms`.", "500", &s.cfg_backoff_ms);
+    }
+}
+
+/// The memory engine pick. A select rather than free text, for the same reason
+/// the provider is one: only an engine the registry registers can load.
+fn memoryField(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
+    defer row.end();
+    fieldLabel(c, s, "Memory engine", "Writes `memory.backend`. Changing it needs a restart.");
+    const field = ui.div(c).grow().minW(0);
+    defer field.end();
+    var picked: ?usize = @as(?usize, s.cfg_memory_backend);
+    if (kit.select(c, "memory-backend", &state.memory_backends, &picked, .{
+        .placeholder = "Choose…",
+        .width = field_w,
+    })) {
+        s.cfg_memory_backend = picked orelse 0;
     }
 }
 

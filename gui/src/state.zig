@@ -140,6 +140,23 @@ pub const prov_ids = [_][]const u8{
     "sglang",
 };
 
+/// Memory engines `src/memory/engines/registry.zig` registers. Shown in the
+/// configuration page's Memory select, in the order the registry lists them.
+pub const memory_backends = [_][]const u8{
+    "hybrid",
+    "sqlite",
+    "markdown",
+    "lucid",
+    "memory",
+    "redis",
+    "lancedb",
+    "api",
+    "postgres",
+    "clickhouse",
+    "kg",
+    "none",
+};
+
 /// What a finished command was for. One request struct is heap allocated per
 /// command and freed when its result is folded in.
 const Request = struct {
@@ -157,8 +174,6 @@ pub const AppState = struct {
     /// The runtime to run: `$NULLCLAW_BIN`, or `nullclaw` off `PATH`.
     exe: []u8,
     executor: runtime.Executor,
-    palette: theme.Palette = theme.midnight,
-    palette_index: usize = 0,
 
     /// The sidebar's rows.
     sessions: std.ArrayListUnmanaged(backend.Session) = .empty,
@@ -204,11 +219,25 @@ pub const AppState = struct {
     cfg_gateway_port: ui.TextBuffer = .{},
     cfg_gateway_allow_public_bind: bool = false,
     cfg_autonomy_level: ui.TextBuffer = .{},
+    /// Memory: which engine stores turns, and whether it writes on its own.
+    cfg_memory_backend: usize = 0,
+    cfg_memory_auto_save: bool = true,
+    /// Reliability: how many times a provider call is retried, and how long
+    /// to wait between tries.
+    cfg_retries: ui.TextBuffer = .{},
+    cfg_backoff_ms: ui.TextBuffer = .{},
     show_advanced_config: bool = false,
 
     /// Built-in runtime managed by the GUI.
     daemon: runtime.Daemon,
     daemon_auto_started: bool = false,
+
+    /// The palette the window is drawn in, and whether the switcher is open.
+    palette_index: usize = 0,
+    palette: theme.Palette = theme.choices[0].palette,
+    theme_menu_open: bool = false,
+    /// The diagnostics panel the sidebar's footer opens.
+    diagnostics_open: bool = false,
 
     /// The last thing that happened, shown for a few seconds.
     toast: []u8 = &.{},
@@ -235,6 +264,7 @@ pub const AppState = struct {
             .executor = runtime.Executor.init(gpa, io, program),
             .daemon = runtime.Daemon.init(gpa, io, program),
         };
+        self.loadTheme();
         // Auto-enable the bundled runtime on startup (best effort).
         self.ensureDaemonRunning();
         self.daemon_auto_started = true;
@@ -264,6 +294,8 @@ pub const AppState = struct {
         self.cfg_gateway_host.deinit();
         self.cfg_gateway_port.deinit();
         self.cfg_autonomy_level.deinit();
+        self.cfg_retries.deinit();
+        self.cfg_backoff_ms.deinit();
         self.clearJson();
         self.clearExpanded();
         self.json_expanded.deinit(self.gpa);
@@ -851,6 +883,20 @@ pub const AppState = struct {
             break :blk std.ascii.eqlIgnoreCase(v, "true");
         };
         setBuf(&self.cfg_autonomy_level, doc.get("autonomy.level") orelse doc.get("autonomy") orelse "supervised");
+
+        // Memory: an engine the registry does not know leaves the select on
+        // its first entry rather than inventing an index.
+        const engine = doc.get("memory.backend") orelse "hybrid";
+        self.cfg_memory_backend = blk: {
+            for (memory_backends, 0..) |name, i| {
+                if (std.mem.eql(u8, name, engine)) break :blk i;
+            }
+            break :blk 0;
+        };
+        self.cfg_memory_auto_save = std.ascii.eqlIgnoreCase(doc.get("memory.auto_save") orelse "true", "true");
+
+        setBuf(&self.cfg_retries, doc.get("reliability.provider_retries") orelse "2");
+        setBuf(&self.cfg_backoff_ms, doc.get("reliability.provider_backoff_ms") orelse "500");
     }
 
     /// Applies the common config form fields into the loaded document.
@@ -917,6 +963,7 @@ pub const AppState = struct {
             doc.setString("autonomy.level", autonomy) catch {};
             changed = true;
         }
+        changed = self.applyMemoryAndReliability(doc) or changed;
         if (changed) self.config_dirty = true;
         self.showConfigDoc();
         self.say("form changes applied in memory -- Save writes them");
@@ -989,7 +1036,48 @@ pub const AppState = struct {
         if (gw_port.len > 0) doc.setAuto("gateway.port", gw_port) catch {};
         doc.setBool("gateway.allow_public_bind", self.cfg_gateway_allow_public_bind) catch {};
         if (autonomy.len > 0) doc.setString("autonomy.level", autonomy) catch {};
+        _ = self.applyMemoryAndReliability(doc);
         self.showConfigDoc();
+    }
+
+    /// Writes the Memory and Reliability fields, reporting whether anything
+    /// actually changed so a no-op Apply does not mark the file dirty.
+    fn applyMemoryAndReliability(self: *AppState, doc: *backend.ConfigDoc) bool {
+        var changed = false;
+
+        const backend_name = if (self.cfg_memory_backend < memory_backends.len)
+            memory_backends[self.cfg_memory_backend]
+        else
+            "hybrid";
+        const backend_now = doc.get("memory.backend") orelse "hybrid";
+        if (!std.mem.eql(u8, backend_now, backend_name)) {
+            doc.setString("memory.backend", backend_name) catch {};
+            changed = true;
+        }
+        const auto_save_now = std.ascii.eqlIgnoreCase(doc.get("memory.auto_save") orelse "true", "true");
+        if (auto_save_now != self.cfg_memory_auto_save) {
+            doc.setBool("memory.auto_save", self.cfg_memory_auto_save) catch {};
+            changed = true;
+        }
+
+        // Numbers, so `setAuto` types them; an empty field keeps the file's.
+        const retries = std.mem.trim(u8, self.cfg_retries.text(), " \t\r\n");
+        if (retries.len > 0) {
+            const now = doc.get("reliability.provider_retries") orelse "";
+            if (!std.mem.eql(u8, now, retries)) {
+                doc.setAuto("reliability.provider_retries", retries) catch {};
+                changed = true;
+            }
+        }
+        const backoff = std.mem.trim(u8, self.cfg_backoff_ms.text(), " \t\r\n");
+        if (backoff.len > 0) {
+            const now = doc.get("reliability.provider_backoff_ms") orelse "";
+            if (!std.mem.eql(u8, now, backoff)) {
+                doc.setAuto("reliability.provider_backoff_ms", backoff) catch {};
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     fn gotConfigSaved(self: *AppState, result: runtime.Result) void {
@@ -1028,6 +1116,38 @@ pub const AppState = struct {
         if (index >= theme.choices.len) return;
         self.palette_index = index;
         self.palette = theme.choices[index].palette;
+        self.saveTheme();
+    }
+
+    /// Where the chosen palette is remembered: a line in the runtime's home
+    /// directory, beside its own files. Not `config.json`, which belongs to
+    /// the runtime and would be sent back through `config validate`.
+    fn themePath(self: *AppState, buf: []u8) ?[]const u8 {
+        return std.fmt.bufPrint(buf, "{s}/gui-theme", .{self.paths.home}) catch null;
+    }
+
+    fn loadTheme(self: *AppState) void {
+        var path_buf: [512]u8 = undefined;
+        const path = self.themePath(&path_buf) orelse return;
+        const text = std.Io.Dir.cwd().readFileAlloc(self.io, path, self.gpa, .limited(64)) catch return;
+        defer self.gpa.free(text);
+        const name = std.mem.trim(u8, text, " \t\r\n");
+        for (theme.choices, 0..) |choice, i| {
+            if (std.ascii.eqlIgnoreCase(choice.name, name)) {
+                self.palette_index = i;
+                self.palette = choice.palette;
+                return;
+            }
+        }
+    }
+
+    fn saveTheme(self: *AppState) void {
+        var path_buf: [512]u8 = undefined;
+        const path = self.themePath(&path_buf) orelse return;
+        std.Io.Dir.cwd().writeFile(self.io, .{
+            .sub_path = path,
+            .data = theme.choices[self.palette_index].name,
+        }) catch {};
     }
 
     pub fn uiTheme(self: *const AppState) ui.Theme {

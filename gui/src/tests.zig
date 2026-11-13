@@ -105,6 +105,8 @@ test "the config page draws its own controls" {
     try testing.expect(w.tester.hasText("Provider"));
     try testing.expect(w.tester.hasText("Gateway"));
     try testing.expect(w.tester.hasText("Agent"));
+    try testing.expect(w.tester.hasText("Memory"));
+    try testing.expect(w.tester.hasText("Reliability"));
     try testing.expect(w.tester.containsText("Reload from disk"));
     try testing.expect(w.tester.containsText("Save & restart runtime"));
     try testing.expect(w.tester.containsText("agents.defaults.model.primary"));
@@ -349,6 +351,37 @@ test "a page's rows are laid out below its toolbar, across the page" {
         checked += 1;
     }
     try testing.expect(checked >= 2);
+}
+
+test "the diagnostics panel names what the window is connected to" {
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var path_buffer: [256]u8 = undefined;
+    const stub = try harness.writeStub(io, &path_buffer);
+
+    var w: Window = undefined;
+    try w.initWith(.{ .runtime = stub });
+    defer w.deinit();
+
+    w.app.refreshSessions();
+    w.settle(1);
+    w.app.select(0);
+    w.settle(1);
+
+    // Closed by default: the panel is a thing you ask for.
+    try testing.expect(!w.tester.containsText("Diagnostics"));
+
+    w.app.diagnostics_open = true;
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.containsText("Diagnostics"));
+    // The paths it reads, and the session it has open — all from state.
+    try testing.expect(w.tester.containsText("Runtime"));
+    try testing.expect(w.tester.containsText("Config"));
+    try testing.expect(w.tester.containsText("Workspace"));
+    try testing.expect(w.tester.containsText("s1"));
+    // The theme it is drawn in, so a screenshot can be traced to a palette.
+    try testing.expect(w.tester.containsText("Matrix"));
 }
 
 // Regression: `gotConfig` loaded the file but never handed it to the tree, so

@@ -17,7 +17,7 @@ with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 65 tests, headless
+zig build test       # 67 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -40,10 +40,11 @@ the app runs:
 | --- | --- |
 | `01-chat-empty.png` | A new conversation, with the opening suggestions |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
-| `03-config.png` | The configuration page: runtime card, Provider/Gateway/Agent sections, advanced fold |
+| `03-config.png` | The configuration page: runtime card, Provider/Gateway/Agent/Memory/Reliability sections, advanced fold |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The same page with every key opened |
-| `06-complaint.png` | The same page when the runtime answers nothing: the complaint is in the toast |
+| `06-complaint.png` | The same page when the runtime answers nothing: its complaint is on the page |
+| `07-diagnostics.png` | The diagnostics panel over the chat: runtime, paths, session, theme |
 
 The shots are taken through the same path the app uses — a runtime answering
 from a process, and a config file on disk — rather than by handing the pages
@@ -97,7 +98,7 @@ the window talks to the CLI.
 | `src/backend.zig` | The runtime's side: argv builders, the JSON it returns, `config.json` |
 | `src/runtime.zig` | Running `nullclaw` off the UI thread and folding results back in |
 | `src/md.zig` | The little markdown reader the transcript draws with |
-| `src/theme.zig` | Two palettes, mapped onto nanoui's theme |
+| `src/theme.zig` | Six palettes, mapped onto nanoui's theme |
 | `src/harness.zig` | A window driven headlessly, for the tests |
 | `src/tests.zig` | What the window must draw, and where |
 | `src/contract.zig` | The check that keeps the pages aligned with the runtime |

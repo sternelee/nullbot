@@ -74,13 +74,109 @@ pub const paper = Palette{
     .code_bg = Color.hex(0xf2f2f6),
 };
 
+/// Matrix: the terminal green the web client opens on. Every colour is the
+/// one `nullclaw-chat-ui`'s `theme-matrix` uses, so the two clients look like
+/// the same product.
+pub const matrix = Palette{
+    .dark = true,
+    .bg = Color.hex(0x030a05),
+    .shell = Color.hex(0x04120a),
+    .panel = Color.hex(0x061a0c),
+    .raised = Color.hex(0x0a2412),
+    .hover = Color.hex(0x0d2e18),
+    .border = Color.hex(0x1d5c2e),
+    .text = Color.hex(0x00ff41),
+    .muted = Color.hex(0x00aa2a),
+    .faint = Color.hex(0x007a1e),
+    .accent = Color.hex(0x00ff41),
+    .accent_text = Color.hex(0x030a05),
+    .danger = Color.hex(0xff2a2a),
+    .warning = Color.hex(0xffaa00),
+    .success = Color.hex(0x00ff41),
+    .user_bubble = Color.hex(0x0a2412),
+    .bot_bubble = Color.hex(0x061a0c),
+    .code_bg = Color.hex(0x020704),
+};
+
+/// Dracula: the editor palette of the same name.
+pub const dracula = Palette{
+    .dark = true,
+    .bg = Color.hex(0x282a36),
+    .shell = Color.hex(0x21222c),
+    .panel = Color.hex(0x2c2e3b),
+    .raised = Color.hex(0x343746),
+    .hover = Color.hex(0x44475a),
+    .border = Color.hex(0x4a4d61),
+    .text = Color.hex(0xf8f8f2),
+    .muted = Color.hex(0xbbbbbb),
+    .faint = Color.hex(0x7b7d8f),
+    .accent = Color.hex(0xbd93f9),
+    .accent_text = Color.hex(0x282a36),
+    .danger = Color.hex(0xff5555),
+    .warning = Color.hex(0xf1fa8c),
+    .success = Color.hex(0x50fa7b),
+    .user_bubble = Color.hex(0x3a3352),
+    .bot_bubble = Color.hex(0x2c2e3b),
+    .code_bg = Color.hex(0x21222c),
+};
+
+/// Synthwave: magenta on deep violet.
+pub const synthwave = Palette{
+    .dark = true,
+    .bg = Color.hex(0x1a0b2e),
+    .shell = Color.hex(0x21103a),
+    .panel = Color.hex(0x271345),
+    .raised = Color.hex(0x36175e),
+    .hover = Color.hex(0x431d73),
+    .border = Color.hex(0x5c2a8a),
+    .text = Color.hex(0x00ffff),
+    .muted = Color.hex(0x36c5c5),
+    .faint = Color.hex(0x2a8f8f),
+    .accent = Color.hex(0xff00ff),
+    .accent_text = Color.hex(0x1a0b2e),
+    .danger = Color.hex(0xff3366),
+    .warning = Color.hex(0xf7e018),
+    .success = Color.hex(0x00ffff),
+    .user_bubble = Color.hex(0x3d1a63),
+    .bot_bubble = Color.hex(0x271345),
+    .code_bg = Color.hex(0x140823),
+};
+
+/// Amber: a monochrome phosphor terminal.
+pub const amber = Palette{
+    .dark = true,
+    .bg = Color.hex(0x1c0f00),
+    .shell = Color.hex(0x241300),
+    .panel = Color.hex(0x2b1700),
+    .raised = Color.hex(0x3d2100),
+    .hover = Color.hex(0x4a2800),
+    .border = Color.hex(0x6b3d00),
+    .text = Color.hex(0xffb000),
+    .muted = Color.hex(0xcc8d00),
+    .faint = Color.hex(0x996a00),
+    .accent = Color.hex(0xffb000),
+    .accent_text = Color.hex(0x1c0f00),
+    .danger = Color.hex(0xff4400),
+    .warning = Color.hex(0xffea00),
+    .success = Color.hex(0xffb000),
+    .user_bubble = Color.hex(0x3d2100),
+    .bot_bubble = Color.hex(0x2b1700),
+    .code_bg = Color.hex(0x140b00),
+};
+
 pub const Named = struct {
     name: []const u8,
     palette: Palette,
 };
 
+/// The palettes the switcher offers, in the order it lists them. The first is
+/// the default, and it is the one the web client opens on.
 pub const choices = [_]Named{
+    .{ .name = "Matrix", .palette = matrix },
     .{ .name = "Midnight", .palette = midnight },
+    .{ .name = "Dracula", .palette = dracula },
+    .{ .name = "Synthwave", .palette = synthwave },
+    .{ .name = "Amber", .palette = amber },
     .{ .name = "Paper", .palette = paper },
 };
 
@@ -123,7 +219,26 @@ test "paper is the light variant" {
     try testing.expectEqual(paper.text, t.text);
 }
 
-test "choices name both palettes" {
-    try testing.expectEqualStrings("Midnight", choices[0].name);
-    try testing.expectEqualStrings("Paper", choices[1].name);
+test "choices name the palettes the switcher offers" {
+    try testing.expectEqualStrings("Matrix", choices[0].name);
+    try testing.expectEqualStrings("Paper", choices[choices.len - 1].name);
+    // Every palette is distinguishable, so a switch is visible. `Color` is a
+    // struct of floats and has no equality operator, so the comparison is on
+    // the channels.
+    for (choices, 0..) |a, i| {
+        for (choices[i + 1 ..]) |b| {
+            try testing.expect(!sameColor(a.palette.accent, b.palette.accent) or
+                !sameColor(a.palette.bg, b.palette.bg));
+        }
+    }
+}
+
+fn sameColor(a: Color, b: Color) bool {
+    return a.r == b.r and a.g == b.g and a.b == b.b and a.a == b.a;
+}
+
+test "matrix is the terminal green the web client uses" {
+    try testing.expectEqual(Color.hex(0x00ff41), matrix.accent);
+    try testing.expectEqual(Color.hex(0x030a05), matrix.bg);
+    try testing.expect(matrix.dark);
 }
