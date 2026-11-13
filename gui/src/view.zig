@@ -298,7 +298,12 @@ fn navRow(s: *AppState, c: *ui.Context, page: Page) void {
 // --- the body ------------------------------------------------------------
 
 fn body(s: *AppState, c: *ui.Context) void {
-    const area = ui.div(c).column().grow().minW(0).hFull().bg(s.palette.bg);
+    // `grow` takes the width the sidebar leaves; `hFull` pins the column to
+    // the window's height, which is what lets a page split into a scrolling
+    // band and a bar under it. With only `grow` the column is as tall as its
+    // content, so a page's own `grow` has no free room to take and the bar
+    // ends up at the bottom of the content instead of the bottom of the window.
+    const area = ui.div(c).column().minW(0).wFull().hFull().bg(s.palette.bg);
     defer area.end();
     header(s, c);
     switch (s.page) {
@@ -762,18 +767,38 @@ fn jsonToolbar(s: *AppState, c: *ui.Context) void {
 fn configPage(s: *AppState, c: *ui.Context) void {
     // Left-aligned with the header, like the JSON pages: the form is a column
     // of labelled rows, and a centred one would drift away from its own title.
-    const outer = ui.div(c).column().grow().minW(0).wFull().px(22).py(16);
+    //
+    // The page is two bands: the form scrolls, and the action bar is pinned
+    // under it. Save used to sit after five sections, so on a short window it
+    // was below the fold — the one control the page exists for, out of reach
+    // until you scrolled to the end.
+    // `hFull` on the band is what makes the split work: without it the column
+    // grows to its content, the scroller never has less room than it needs,
+    // and the action bar ends up below the fold — pinned to nothing.
+    const outer = ui.div(c).column().grow().minW(0).wFull().px(22).pt(16);
     defer outer.end();
-    const page = ui.div(c).column().hFull().wFull().maxW(content_max).gap(16).scrollY();
-    defer page.end();
 
-    // The shell header already names the page and its file, so this page
-    // starts with the runtime card rather than a second title.
-    runtimeStatusCard(s, c);
-    if (s.config == null) configMissingNotice(s, c);
-    commonConfigForm(s, c);
+    // The scroller is closed before the bar is drawn. A `defer` here would
+    // leave it open for the rest of the function, and the bar would be drawn
+    // inside it — scrolling away with the form instead of staying put.
+    {
+        // `clip` as well as `scrollY`: a scrolling box does not cut its
+        // content by itself, so the form ran on over the pinned bar and drew
+        // through it.
+        const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip();
+        defer scroller.end();
+        const page = ui.div(c).column().wFull().maxW(content_max).gap(16).pb(16);
+        defer page.end();
+
+        // The shell header already names the page and its file, so this page
+        // starts with the runtime card rather than a second title.
+        runtimeStatusCard(s, c);
+        if (s.config == null) configMissingNotice(s, c);
+        commonConfigForm(s, c);
+        advancedSection(s, c);
+    }
+
     configActions(s, c);
-    advancedSection(s, c);
 }
 
 /// The state of the loaded file, as one chip: what the header shows in
@@ -871,6 +896,19 @@ fn fieldLabel(c: *ui.Context, s: *AppState, label: []const u8, hint: []const u8)
 }
 
 fn formField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, placeholder: []const u8, buf: *ui.TextBuffer) void {
+    formFieldOpt(s, c, label, hint, placeholder, buf, .{});
+}
+
+/// The same, with the field's own options: a secret is drawn as bullets.
+fn formFieldOpt(
+    s: *AppState,
+    c: *ui.Context,
+    label: []const u8,
+    hint: []const u8,
+    placeholder: []const u8,
+    buf: *ui.TextBuffer,
+    opts: struct { password: bool = false },
+) void {
     const row = ui.div(c).row().wFull().gap(12).itemsCenter();
     defer row.end();
     fieldLabel(c, s, label, hint);
@@ -881,6 +919,7 @@ fn formField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, 
         .width = .{ .px = field_w },
         .size = 12.5,
         .mono = true,
+        .password = opts.password,
         .color = c.theme.text,
     });
 }
@@ -891,7 +930,7 @@ fn formField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, 
 fn providerField(s: *AppState, c: *ui.Context) void {
     const row = ui.div(c).row().wFull().gap(12).itemsCenter();
     defer row.end();
-    fieldLabel(c, s, "Default provider", "The prefix of `agents.defaults.model.primary`, before the slash.");
+    fieldLabel(c, s, "Default provider", "Before the slash in `model.primary`.");
     if (s.cfg_provider_options.len == 0) {
         ui.text(c, "No providers known to the runtime.", .{ .size = 12, .color = s.palette.muted });
         return;
@@ -919,7 +958,7 @@ fn autonomyField(s: *AppState, c: *ui.Context) void {
     {
         const row = ui.div(c).row().wFull().gap(12).itemsCenter();
         defer row.end();
-        fieldLabel(c, s, "Autonomy level", "How much the agent may do without asking. Writes `autonomy.level`.");
+        fieldLabel(c, s, "Autonomy level", "`autonomy.level`.");
         if (ui.segmented(c, &names, &picked)) s.cfg_autonomy_level.set(values[picked]);
         ui.spacer(c);
     }
@@ -950,18 +989,20 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
         const card = configCard(c, s);
         defer card.end();
         providerField(s, c);
-        formField(s, c, "Default model", "Combined with the provider as `provider/model` in `agents.defaults.model.primary`.", "anthropic/claude-sonnet-4, openai/gpt-5.3-codex", &s.cfg_default_model);
-        formField(s, c, "Provider API key", "Stored under `models.providers.<name>.api_key`.", "API key for the default provider", &s.cfg_api_key);
-        formField(s, c, "Provider base URL", "Optional custom endpoint, `models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
+        formField(s, c, "Default model", "After the slash in `model.primary`.", "anthropic/claude-sonnet-4, openai/gpt-5.3-codex", &s.cfg_default_model);
+        // A key is a secret: bullets, not the value on screen and in every
+        // screenshot of this page.
+        formFieldOpt(s, c, "Provider API key", "`models.providers.<name>.api_key`.", "API key for the default provider", &s.cfg_api_key, .{ .password = true });
+        formField(s, c, "Provider base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
     }
     {
         const section = configSection(c, s, "Gateway", "Where the built-in runtime listens. Restart it after a change.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        formField(s, c, "Gateway host", "Writes `gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
-        formField(s, c, "Gateway port", "Writes `gateway.port`.", "3000", &s.cfg_gateway_port);
-        toggleField(s, c, "Allow public bind", "Writes `gateway.allow_public_bind`.", &s.cfg_gateway_allow_public_bind);
+        formField(s, c, "Gateway host", "`gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
+        formField(s, c, "Gateway port", "`gateway.port`.", "3000", &s.cfg_gateway_port);
+        toggleField(s, c, "Allow public bind", "`gateway.allow_public_bind`.", &s.cfg_gateway_allow_public_bind);
         if (s.cfg_gateway_allow_public_bind) {
             ui.text(c, "The gateway will accept connections from other machines. Keep pairing and a token enabled.", .{ .size = 11, .color = s.palette.danger, .wrap = true });
         }
@@ -979,15 +1020,15 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
         const card = configCard(c, s);
         defer card.end();
         memoryField(s, c);
-        toggleField(s, c, "Auto-save turns", "Writes `memory.auto_save`. Off keeps a session in memory only.", &s.cfg_memory_auto_save);
+        toggleField(s, c, "Auto-save turns", "`memory.auto_save`.", &s.cfg_memory_auto_save);
     }
     {
         const section = configSection(c, s, "Reliability", "What happens when a provider call fails.");
         defer section.end();
         const card = configCard(c, s);
         defer card.end();
-        formField(s, c, "Provider retries", "Writes `reliability.provider_retries`.", "2", &s.cfg_retries);
-        formField(s, c, "Backoff", "Milliseconds between tries, `reliability.provider_backoff_ms`.", "500", &s.cfg_backoff_ms);
+        formField(s, c, "Provider retries", "`reliability.provider_retries`.", "2", &s.cfg_retries);
+        formField(s, c, "Backoff", "`reliability.provider_backoff_ms`.", "500", &s.cfg_backoff_ms);
     }
 }
 
@@ -996,7 +1037,7 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
 fn memoryField(s: *AppState, c: *ui.Context) void {
     const row = ui.div(c).row().wFull().gap(12).itemsCenter();
     defer row.end();
-    fieldLabel(c, s, "Memory engine", "Writes `memory.backend`. Changing it needs a restart.");
+    fieldLabel(c, s, "Memory engine", "`memory.backend`.");
     const field = ui.div(c).grow().minW(0);
     defer field.end();
     var picked: ?usize = @as(?usize, s.cfg_memory_backend);
@@ -1008,27 +1049,33 @@ fn memoryField(s: *AppState, c: *ui.Context) void {
     }
 }
 
+/// The pinned action bar: a hairline, the buttons, and one sentence saying
+/// what the primary button will do. The state itself lives in the header
+/// chip, so it is not repeated here.
 fn configActions(s: *AppState, c: *ui.Context) void {
-    const col = ui.div(c).column().wFull().gap(6);
-    defer col.end();
-    {
-        const row = ui.div(c).row().wFull().gap(8).itemsCenter();
-        defer row.end();
-        const ready = s.config != null and !s.config_running;
-        if (ui.button(c, "Save & restart runtime", .{ .variant = .primary, .size = 12, .icon = "square.and.arrow.down", .disabled = !ready }).clicked) s.saveConfig();
-        if (ui.button(c, "Apply to config", .{ .size = 12, .icon = "checkmark", .disabled = !ready }).clicked) s.applyConfigForm();
-        if (ui.button(c, "Reload from disk", .{ .variant = .ghost, .size = 12, .icon = "arrow.clockwise", .disabled = s.config_running }).clicked) s.loadConfig();
-        ui.spacer(c);
-        if (s.config_running) {
-            ui.text(c, "Validating…", .{ .size = 11, .color = s.palette.accent });
-        } else if (s.config == null) {
-            ui.text(c, "Waiting for config.json", .{ .size = 11, .color = s.palette.warning });
-        } else if (s.config_dirty) {
-            ui.text(c, "Unsaved changes", .{ .size = 11, .color = s.palette.warning });
-        } else {
-            ui.text(c, "Saved and valid", .{ .size = 11, .color = s.palette.success });
-        }
-    }
+    const band = ui.div(c).column().wFull().pt(10).pb(14).gap(6);
+    defer band.end();
+
+    _ = c.leaf(.{
+        .width = .fill,
+        .height = .{ .px = 1 },
+        .background = s.palette.border,
+    }, .none, null);
+
+    // No `maxW` here: the bar spans the window, and a capped column inside a
+    // row squeezes the buttons until their labels are cut off.
+    const inner = ui.div(c).column().wFull().gap(5);
+    defer inner.end();
+
+    const row = ui.div(c).row().wFull().gap(8).itemsCenter();
+    defer row.end();
+    const ready = s.config != null and !s.config_running;
+    // An explicit width: `.auto` measured the label at 82 points and left the
+    // box 2 points of slack, and the last glyph was drawn past the edge.
+    if (ui.button(c, "Save & restart", .{ .variant = .primary, .size = 12, .icon = "square.and.arrow.down", .width = .{ .px = 148 }, .disabled = !ready }).clicked) s.saveConfig();
+    if (ui.button(c, "Apply", .{ .size = 12, .icon = "checkmark", .disabled = !ready }).clicked) s.applyConfigForm();
+    if (ui.button(c, "Reload", .{ .variant = .ghost, .size = 12, .icon = "arrow.clockwise", .disabled = s.config_running }).clicked) s.loadConfig();
+    ui.spacer(c);
     configStatusLine(s, c);
 }
 
@@ -1036,15 +1083,16 @@ fn configActions(s: *AppState, c: *ui.Context) void {
 /// and the consequence of an action next to the control, not in a toast that
 /// disappears after a few seconds.
 fn configStatusLine(s: *AppState, c: *ui.Context) void {
-    if (s.config_running) {
-        ui.text(c, "nullclaw config validate is reading the file on disk.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
-    } else if (s.config_dirty) {
-        ui.text(c, "Your edits are in memory only. Save & restart runtime writes them to disk, then restarts the gateway once.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
-    } else if (s.config != null) {
-        ui.text(c, "Everything above is read from config.json. Advanced shows the raw file and a dotted-path editor.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
-    } else {
-        // The warning card above already explains the missing file.
-    }
+    const text: []const u8 = if (s.config_running)
+        "reading the file on disk…"
+    else if (s.config_dirty)
+        "edits are in memory only"
+    else if (s.config != null)
+        "read from config.json"
+    else
+        "";
+    if (text.len == 0) return;
+    ui.text(c, text, .{ .size = 11, .color = s.palette.faint });
 }
 
 /// A clickable heading that hides the raw editor until asked for, instead
