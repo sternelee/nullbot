@@ -1,0 +1,26 @@
+.{
+    .name = .nullclaw_gui,
+    .version = "0.1.0",
+    .fingerprint = 0x66b7e671533b81be,
+    // nanoui is a Zig 0.17 desktop UI toolkit (native UI on the GPU).
+    // Both binaries now build with Zig 0.17; this GUI remains a separate
+    // program that drives the `nullclaw` runtime rather than linking it.
+    .minimum_zig_version = "0.17.0",
+    .dependencies = .{
+        // The runtime the window drives. Building the GUI also builds this
+        // and installs it beside `nullclaw-gui`, so the window has its own
+        // nullclaw and does not depend on one being on PATH.
+        .nullclaw = .{
+            .path = "..",
+        },
+        .nanoui = .{
+            .url = "git+https://github.com/justrach/nanoui#v0.13.0",
+            .hash = "nanoui-0.13.0-we0KMd1-MQBzJq1VU59oWYKF3KHhSYPj8_qjVe2icq_e",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}
