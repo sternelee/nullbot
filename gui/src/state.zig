@@ -754,7 +754,7 @@ pub const AppState = struct {
         // the runtime's: opening a page must not build a runtime, and a
         // window that has never run a turn still has a config on disk.
         return switch (self.page) {
-            .capabilities, .models, .memory, .mcp, .skills, .channels => blk: {
+            .capabilities, .models, .memory, .mcp, .skills, .channels, .workspace => blk: {
                 var cfg = yc.config.Config.load(self.gpa) catch break :blk null;
                 defer cfg.deinit();
                 break :blk switch (self.page) {
@@ -766,6 +766,11 @@ pub const AppState = struct {
                     .mcp => yc.mcp_admin.buildServersJson(self.gpa, cfg.mcp_servers) catch null,
                     .skills => yc.page_json.skillsList(self.gpa, &cfg) catch null,
                     .channels => yc.page_json.channelList(self.gpa, &cfg) catch null,
+                    // The audit walks the workspace, so it needs the path the
+                    // config resolved rather than the one the window guessed.
+                    .workspace => yc.workspace_audit.renderJsonReport(self.gpa, cfg.workspace_dir, .{
+                        .workspace_dir = cfg.workspace_dir,
+                    }) catch null,
                     else => unreachable,
                 };
             },
@@ -863,6 +868,7 @@ pub const AppState = struct {
             .channels => backend.readRecordList(self.gpa, text, "Channels"),
             .cron => backend.readRecordList(self.gpa, text, "Scheduled tasks"),
             .mcp => backend.readRecordList(self.gpa, text, "MCP servers"),
+            .workspace => backend.readWorkspaceAudit(self.gpa, text),
             else => return,
         };
         // A reader that could not read the document falls back to the tree.

@@ -1068,6 +1068,81 @@ pub fn readMemoryStats(gpa: std.mem.Allocator, text: []const u8) Rows {
     return out;
 }
 
+/// Reads `workspace audit --json`: the findings, grouped by severity, with
+/// the rule that fired and the file it fired on.
+///
+/// The counts the report carries are the summary line; the findings are what
+/// the page is opened for, so each one is a row.
+pub fn readWorkspaceAudit(gpa: std.mem.Allocator, text: []const u8) Rows {
+    var out = Rows.empty(gpa);
+    const root = std.json.parseFromSliceLeaky(std.json.Value, out.arena.allocator(), text, .{}) catch {
+        out.problem = "the runtime did not print JSON";
+        return out;
+    };
+    const obj = switch (root) {
+        .object => |o| o,
+        else => {
+            out.problem = "the answer is not an object";
+            return out;
+        },
+    };
+
+    // The headline: how many findings, and whether the run passed.
+    const ok = bool_(obj.get("ok")) orelse true;
+    const counts: ?std.json.ObjectMap = switch (obj.get("counts") orelse std.json.Value{ .null = {} }) {
+        .object => |o| o,
+        else => null,
+    };
+    const critical = if (counts) |c| (int(c.get("critical")) orelse 0) else 0;
+    const high = if (counts) |c| (int(c.get("high")) orelse 0) else 0;
+    const medium = if (counts) |c| (int(c.get("medium")) orelse 0) else 0;
+    {
+        var buf: [160]u8 = undefined;
+        out.note = gpa.dupe(u8, std.fmt.bufPrint(&buf, "{s} · {d} critical, {d} high, {d} medium", .{
+            if (ok) "no findings above the threshold" else "findings above the threshold",
+            critical,
+            high,
+            medium,
+        }) catch "") catch &.{};
+    }
+
+    const findings = switch (obj.get("findings") orelse std.json.Value{ .null = {} }) {
+        .array => |a| a.items,
+        else => &[_]std.json.Value{},
+    };
+
+    for (findings) |item| {
+        if (item != .object) continue;
+        const rec = item.object;
+        const severity = str(rec.get("severity")) orelse "medium";
+        const rule = str(rec.get("rule")) orelse "finding";
+        const path = str(rec.get("path")) orelse "";
+        const line = int(rec.get("line"));
+
+        var detail_buf: [320]u8 = undefined;
+        const detail = if (line) |n|
+            std.fmt.bufPrint(&detail_buf, "{s}:{d}", .{ path, n }) catch path
+        else
+            path;
+
+        const state: Row.State = if (std.mem.eql(u8, severity, "critical"))
+            .bad
+        else if (std.mem.eql(u8, severity, "high"))
+            .warn
+        else
+            .none;
+
+        const group = if (std.mem.eql(u8, severity, "critical"))
+            "Critical"
+        else if (std.mem.eql(u8, severity, "high"))
+            "High"
+        else
+            "Medium";
+        out.row(group, rule, detail, state) catch {};
+    }
+    return out;
+}
+
 fn str(v: ?std.json.Value) ?[]const u8 {
     const val = v orelse return null;
     return switch (val) {

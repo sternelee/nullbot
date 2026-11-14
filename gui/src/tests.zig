@@ -437,9 +437,6 @@ test "every data page answers without a runtime on disk" {
     for (state.nav) |page| {
         if (page == .chat or page == .config) continue;
         if (!page.takesJson()) continue;
-        // `workspace audit` has no JSON builder in the runtime yet, so it is
-        // the one page that still asks the CLI.
-        if (page == .workspace) continue;
 
         w.app.openPage(page);
         w.settle(1);
@@ -453,7 +450,9 @@ test "every data page answers without a runtime on disk" {
         }
         checked += 1;
     }
-    try testing.expectEqual(@as(usize, 9), checked);
+    // Every page that asks for JSON. A number written down fails if a page
+    // quietly stops asking for it, or a new one is added and not covered.
+    try testing.expectEqual(@as(usize, 10), checked);
 }
 
 // The window carries the runtime as a module, not as a program it looks for.

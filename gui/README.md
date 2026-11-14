@@ -13,10 +13,9 @@ is the whole window.
 
 The data pages are answered the same way. `src/page_json.zig` builds the JSON
 those pages show — models, memory, skills, channels, cron — from the same
-sources the CLI reads, and `capabilities`, `status`, `doctor` and `mcp` already
-exposed theirs. Nine of the ten data pages therefore answer with no runtime on
-disk at all; `workspace audit` is the one that still asks the CLI, because the
-runtime has no JSON builder for it yet.
+sources the CLI reads; `capabilities`, `status`, `doctor`, `mcp` and
+`workspace_audit` already exposed theirs. All ten data pages therefore answer
+with no runtime on disk at all.
 
 Both build with **Zig 0.17.0**.
 
@@ -30,11 +29,10 @@ zig build test       # 67 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
-Nothing has to be installed: the runtime is linked in, and the data pages are
-answered from it. `NULLCLAW_BIN` still points the few commands that remain
-prose (`auth`, `hardware`, `service`, `update`, `workspace audit`) at a
-different binary — a build from a checkout, say — and an empty value counts as
-unset.
+Nothing has to be installed: the runtime is linked in, and every page is
+answered from it. `NULLCLAW_BIN` still points the four commands that remain
+prose (`auth`, `hardware`, `service`, `update`) at a different binary — a build
+from a checkout, say — and an empty value counts as unset.
 
 The tests do not need a runtime installed: `src/tests.zig` writes a stub
 `nullclaw` that answers the commands the window runs, and drives the real view
@@ -58,6 +56,7 @@ the app runs:
 | `08-capabilities.png` | Capabilities as a list: channels, memory engines and tools, each with its state |
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
 | `10-config-full.png` | The configuration page in a tall window, so every section is visible at once |
+| `11-workspace.png` | The workspace audit: findings grouped by severity, each with its rule and `path:line` |
 
 The shots are taken through the same path the app uses — a runtime answering
 from a process, and a config file on disk — rather than by handing the pages

@@ -92,6 +92,11 @@ test "screenshots" {
     w.settle(1);
     try shoot(&w, "08-capabilities");
 
+    // The audit page: findings from the workspace, with their severities.
+    w.app.openPage(.workspace);
+    w.settle(1);
+    try shoot(&w, "11-workspace");
+
     // A page whose command answered with nothing, which is an answer.
     w.app.openPage(.skills);
     w.settle(1);

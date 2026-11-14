@@ -119,6 +119,24 @@ pub fn run(allocator: Allocator, options: Options) !u8 {
     return if (report.exceedsThreshold(options.fail_on)) 1 else 0;
 }
 
+/// The audit's answer as JSON, for a caller that is not the command line.
+///
+/// `run` is the CLI's entry point: it writes to stdout and returns an exit
+/// code. This builds the same report and renders it the same way, and hands
+/// the bytes back instead, so a window can show the audit without spawning
+/// the program.
+///
+/// The caller owns the returned slice.
+pub fn renderJsonReport(allocator: Allocator, workspace_dir: []const u8, options: Options) ![]u8 {
+    const resolved = try fs_compat.realpathAllocPath(allocator, workspace_dir);
+    defer allocator.free(resolved);
+
+    var report = try buildReport(allocator, resolved, options);
+    defer report.deinit(allocator);
+
+    return renderReport(allocator, report, options.fail_on, true, null);
+}
+
 pub fn buildReport(allocator: Allocator, workspace_dir: []const u8, options: Options) !Report {
     const repo_root = try resolveRepoRoot(allocator, workspace_dir);
 
