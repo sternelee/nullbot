@@ -4,12 +4,16 @@ A desktop window for [NullClaw](../../README.md): the session list, the
 conversation, the composer, and a page for each thing the runtime can tell you
 about itself.
 
-It is a separate binary from `nullclaw`: the window links
-[nanoui](https://github.com/justrach/nanoui) and drives `nullclaw` as a child
-process, rather than linking the runtime into the GUI. Keeping them separate
-lets the two evolve independently; the GUI reads `~/.nullclaw/config.json`
-directly and otherwise talks to the runtime through its CLI. Both now build
-with **Zig 0.17.0**.
+The window links the runtime. `nullclaw` is a module here, not a program the
+window goes looking for: `src/runtime_builder.zig` assembles a config, a
+provider, a tool set and a memory backend into a `Runtime`, and a chat turn is
+`Runtime.turn(message)` on its own thread. There is no subprocess, no JSON to
+parse back, and no `nullclaw` to install — `zig build` produces one binary that
+is the whole window.
+
+The read-only pages still run the CLI, because they ask the runtime questions
+whose answers are already JSON on stdout; a turn is the one thing that had to
+be a function call. Both build with **Zig 0.17.0**.
 
 ## Build and run
 
@@ -21,10 +25,9 @@ zig build test       # 67 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
-`nullclaw` must be on `PATH` for anything but the empty state to work; without
-it each page says so and the conversation shows what the runtime said when it
-could not be started. `NULLCLAW_BIN` points the window at a different binary —
-a build from a checkout, say. An empty value counts as unset.
+Nothing has to be installed: the runtime is linked in. `NULLCLAW_BIN` still
+points the *pages* at a different binary — a build from a checkout, say — and
+an empty value counts as unset.
 
 The tests do not need a runtime installed: `src/tests.zig` writes a stub
 `nullclaw` that answers the commands the window runs, and drives the real view

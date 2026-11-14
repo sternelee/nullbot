@@ -11,18 +11,27 @@ pub const exe = "nullclaw";
 
 /// The environment variable that points the window at a different runtime
 /// binary: a build from a checkout, or a stub in a test. Empty counts as
-/// unset. Without it the window prefers the runtime bundled beside itself —
-/// `gui/zig-out/bin/nullclaw` sits next to `gui/zig-out/bin/nullclaw-gui` —
-/// and only then falls back to `PATH`. The returned slice is owned by the
-/// caller.
+/// unset.
+pub const bin_env = "NULLCLAW_BIN";
+
+/// Where the window's runtime comes from, in the order it looks:
+///
+/// 1. `$NULLCLAW_BIN`, for a stub or a checkout build.
+/// 2. The runtime embedded in this binary, written out to the cache on first
+///    use. A single `nullclaw-gui` is then a working window.
+/// 3. A `nullclaw` beside the window, for a build made without the embed.
+/// 4. `PATH`, for a runtime installed by other means.
+///
+/// The returned slice is owned by the caller.
 pub fn executable(
     gpa: std.mem.Allocator,
     io: Io,
     environ: std.process.Environ.Map,
 ) ![]u8 {
-    if (environ.get("NULLCLAW_BIN")) |path| {
+    if (environ.get(bin_env)) |path| {
         if (path.len > 0) return gpa.dupe(u8, path);
     }
+
     if (std.process.executablePathAlloc(io, gpa)) |self_path| {
         defer gpa.free(self_path);
         if (std.fs.path.dirname(self_path)) |dir| {

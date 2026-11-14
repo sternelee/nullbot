@@ -5,6 +5,7 @@
 //! executor owns the command line, the output, and the thread; a handler sees
 //! them for the length of one call and must copy what it wants to keep.
 const std = @import("std");
+const yc = @import("nullclaw");
 const Io = std.Io;
 const builtin = @import("builtin");
 
@@ -545,4 +546,120 @@ pub const Daemon = struct {
         }
         return "not running";
     }
+};
+
+// ── In-process turns ────────────────────────────────────────────────────
+//
+// The window links the runtime, so a turn is a function call rather than a
+// subprocess. It still runs on its own thread: `Agent.turn` can take a minute
+// and the view is rebuilt every frame.
+
+/// One turn running on its own thread, with the reply it produced.
+pub const Turn = struct {
+    gpa: std.mem.Allocator,
+    /// The runtime the turn runs against. Owned by the state, not by this.
+    runtime: *yc.runtime_builder.Runtime,
+    message: []u8,
+    session: ?[]u8,
+    thread: std.Thread,
+    joined: bool = false,
+    done: std.atomic.Value(bool) = .init(false),
+    reply: []u8 = &.{},
+    failure: ?anyerror = null,
+
+    fn joinOnce(self: *Turn) void {
+        if (self.joined) return;
+        self.thread.join();
+        self.joined = true;
+    }
+
+    fn free(self: *Turn) void {
+        self.gpa.free(self.message);
+        if (self.session) |s| self.gpa.free(s);
+        self.gpa.free(self.reply);
+        self.gpa.destroy(self);
+    }
+};
+
+fn turnWork(t: *Turn) void {
+    defer t.done.store(true, .release);
+    if (t.session) |key| t.runtime.useSession(key);
+    const reply = t.runtime.turn(t.message) catch |err| {
+        t.failure = err;
+        return;
+    };
+    defer t.runtime.allocator.free(reply);
+    t.reply = t.gpa.dupe(u8, reply) catch &.{};
+}
+
+/// Runs turns against the linked runtime, one thread each.
+pub const Turns = struct {
+    gpa: std.mem.Allocator,
+    jobs: std.ArrayListUnmanaged(*Turn) = .empty,
+
+    pub fn init(gpa: std.mem.Allocator) Turns {
+        return .{ .gpa = gpa };
+    }
+
+    pub fn deinit(self: *Turns) void {
+        for (self.jobs.items) |job| {
+            job.joinOnce();
+            job.free();
+        }
+        self.jobs.deinit(self.gpa);
+        self.* = undefined;
+    }
+
+    pub fn busy(self: *const Turns) bool {
+        for (self.jobs.items) |job| {
+            if (!job.done.load(.acquire)) return true;
+        }
+        return false;
+    }
+
+    /// Starts a turn. The message and session are copied.
+    pub fn start(
+        self: *Turns,
+        runtime: *yc.runtime_builder.Runtime,
+        message: []const u8,
+        session: ?[]const u8,
+    ) !void {
+        const job = try self.gpa.create(Turn);
+        errdefer self.gpa.destroy(job);
+        job.* = .{
+            .gpa = self.gpa,
+            .runtime = runtime,
+            .message = try self.gpa.dupe(u8, message),
+            .session = if (session) |s| try self.gpa.dupe(u8, s) else null,
+            .thread = undefined,
+        };
+        errdefer self.gpa.free(job.message);
+        job.thread = try std.Thread.spawn(.{}, turnWork, .{job});
+        try self.jobs.append(self.gpa, job);
+    }
+
+    /// Hands every finished turn to `handler`, oldest first, and frees it.
+    pub fn pump(self: *Turns, ctx: anytype, comptime handler: fn (@TypeOf(ctx), TurnResult) void) void {
+        var i: usize = 0;
+        while (i < self.jobs.items.len) {
+            const job = self.jobs.items[i];
+            if (!job.done.load(.acquire)) {
+                i += 1;
+                continue;
+            }
+            job.joinOnce();
+            handler(ctx, .{
+                .reply = job.reply,
+                .failure = job.failure,
+            });
+            _ = self.jobs.swapRemove(i);
+            job.free();
+        }
+    }
+};
+
+/// What a finished turn produced: the reply, or why it failed.
+pub const TurnResult = struct {
+    reply: []const u8,
+    failure: ?anyerror,
 };

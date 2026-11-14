@@ -11,6 +11,14 @@ pub fn build(b: *std.Build) void {
     const options = b.addOptions();
     options.addOption([]const u8, "version", b.option([]const u8, "version", "nullclaw-gui's version") orelse "0.1.0");
 
+    // The runtime as a module: the window links nullclaw's own library and
+    // calls into it, rather than spawning a program.
+    const runtime_dep = b.dependency("nullclaw", .{
+        .target = target,
+        .optimize = optimize,
+    });
+    const runtime_mod = runtime_dep.module("nullclaw");
+
     const mod = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
@@ -21,31 +29,14 @@ pub fn build(b: *std.Build) void {
             .{ .name = "build_options", .module = options.createModule() },
         },
     });
+    mod.addImport("nullclaw", runtime_mod);
     const exe = b.addExecutable(.{ .name = "nullclaw-gui", .root_module = mod });
     // A window of its own on Windows, without a console beside it.
     if (target.result.os.tag == .windows) exe.subsystem = .windows;
     b.installArtifact(exe);
 
-    // The runtime the window drives is built from the repository above and
-    // installed beside `nullclaw-gui`, so `zig build` in this directory
-    // produces a window with its own nullclaw. Without this the window has no
-    // runtime to run: every page would spawn a missing program and report
-    // FileNotFound.
-    const runtime_dep = b.dependency("nullclaw", .{
-        .target = target,
-        .optimize = optimize,
-    });
-    const runtime = runtime_dep.artifact("nullclaw");
-    b.installArtifact(runtime);
-
     const run = b.addRunArtifact(exe);
     run.addPassthruArgs();
-    // `zig build run` executes the cached binary in .zig-cache, whose
-    // directory holds no `nullclaw`: the window would resolve its runtime to
-    // a bare PATH name and fail to start. Point the run at the installed
-    // runtime so the gateway and every page find it.
-    run.step.dependOn(b.getInstallStep());
-    run.setEnvironmentVariable("NULLCLAW_BIN", "zig-out/bin/nullclaw");
     b.step("run", "Run the nullclaw desktop GUI").dependOn(&run.step);
 
     const filters = b.option([]const []const u8, "test-filter", "Run only the tests whose names contain this") orelse &.{};
@@ -54,8 +45,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
         .link_libc = true,
-        .imports = &.{.{ .name = "nanoui", .module = nanoui }},
+        .imports = &.{
+            .{ .name = "nanoui", .module = nanoui },
+            .{ .name = "build_options", .module = options.createModule() },
+        },
     });
+    test_module.addImport("nullclaw", runtime_mod);
     const tests = b.addTest(.{ .filters = filters, .root_module = test_module });
     b.step("test", "Run the GUI's tests").dependOn(&b.addRunArtifact(tests).step);
 

@@ -4,6 +4,7 @@
 const std = @import("std");
 const ui = @import("nanoui").ui;
 const backend = @import("backend.zig");
+const yc = @import("nullclaw");
 const md = @import("md.zig");
 const runtime = @import("runtime.zig");
 const theme = @import("theme.zig");
@@ -184,6 +185,14 @@ pub const AppState = struct {
     /// The runtime to run: `$NULLCLAW_BIN`, or `nullclaw` off `PATH`.
     exe: []u8,
     executor: runtime.Executor,
+    /// The runtime linked into this binary, built on first use. Null until
+    /// then, and null again if it could not be built — a window with no
+    /// config still opens, and the chat says why it cannot answer.
+    linked: ?yc.runtime_builder.Runtime = null,
+    /// Why `linked` is null, when it is.
+    linked_error: ?[]u8 = null,
+    /// Turns running against `linked`, one thread each.
+    turns: runtime.Turns,
 
     /// The sidebar's rows.
     sessions: std.ArrayListUnmanaged(backend.Session) = .empty,
@@ -292,6 +301,7 @@ pub const AppState = struct {
             .paths = resolved,
             .exe = program,
             .executor = runtime.Executor.init(gpa, io, program),
+            .turns = runtime.Turns.init(gpa),
             .daemon = runtime.Daemon.init(gpa, io, program),
         };
         self.loadTheme();
@@ -307,6 +317,9 @@ pub const AppState = struct {
         self.daemon.deinit();
         // Nothing can call a handler once the executor is down, so whatever is
         // still pending is ours to free.
+        self.turns.deinit();
+        if (self.linked) |*rt| rt.deinit();
+        if (self.linked_error) |why| self.gpa.free(why);
         self.executor.deinit();
         for (self.pending.items) |req| self.gpa.destroy(req);
         self.pending.deinit(self.gpa);
@@ -346,6 +359,7 @@ pub const AppState = struct {
     /// Folds finished commands in. Call once at the top of a frame.
     pub fn pump(self: *AppState) void {
         self.executor.pump();
+        self.turns.pump(self, onTurnDone);
         // Keep the embedded runtime alive while the GUI is open.
         self.ensureDaemonRunning();
     }
@@ -355,7 +369,36 @@ pub const AppState = struct {
     /// it runs for the whole session, so counting it made the header say
     /// "working…" forever.
     pub fn busy(self: *AppState) bool {
-        return self.executor.busy();
+        return self.executor.busy() or self.turns.busy();
+    }
+
+    /// Builds the linked runtime on first use. A config that cannot carry a
+    /// turn leaves `linked_error` set, and the chat reports it instead of
+    /// pretending to be ready.
+    fn ensureLinked(self: *AppState) ?*yc.runtime_builder.Runtime {
+        if (self.linked) |*rt| return rt;
+        if (self.linked_error != null) return null;
+        self.linked = yc.runtime_builder.Runtime.init(self.gpa) catch |err| {
+            self.linked_error = std.fmt.allocPrint(self.gpa, "{s}", .{@errorName(err)}) catch null;
+            return null;
+        };
+        return &self.linked.?;
+    }
+
+    fn onTurnDone(self: *AppState, result: runtime.TurnResult) void {
+        self.sending = false;
+        if (result.failure) |err| {
+            const text = std.fmt.allocPrint(self.gpa, "{s}", .{@errorName(err)}) catch return;
+            defer self.gpa.free(text);
+            self.pushMessage("error", text);
+            self.say(text);
+            return;
+        }
+        if (result.reply.len == 0) {
+            self.say("the runtime answered with nothing");
+            return;
+        }
+        self.pushMessage("assistant", result.reply);
     }
 
     fn ensureDaemonRunning(self: *AppState) void {
@@ -609,33 +652,37 @@ pub const AppState = struct {
     /// Sends what the composer holds to the runtime and appends the answer.
     /// A new session is created by the runtime when none is selected, which is
     /// what the "New chat" button relies on.
+    /// Runs one turn against the linked runtime. The turn is a function call,
+    /// not a subprocess: the window carries the runtime, so there is no
+    /// program to find and no JSON to parse back.
     pub fn send(self: *AppState) void {
         const text = std.mem.trim(u8, self.composer.text(), " \t\r\n");
         if (text.len == 0 or self.sending) return;
-        const message = self.gpa.dupe(u8, text) catch return;
-        const session: ?[]u8 = if (self.selected) |i|
-            self.gpa.dupe(u8, self.sessions.items[i].key) catch null
+
+        const session: ?[]const u8 = if (self.selected) |i|
+            (if (i < self.sessions.items.len) self.sessions.items[i].key else null)
         else
             null;
-        defer if (session) |s| self.gpa.free(s);
 
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-        defer argv.deinit(self.gpa);
-        backend.argvInvoke(self.gpa, &argv, .{
-            .message = message,
-            .session = session,
-            .workspace = self.paths.workspace,
-        }) catch {
-            self.gpa.free(message);
-            return;
-        };
-        defer self.gpa.free(message);
-
-        // The user's own turn is shown at once; the runtime's comes back.
+        // What the person typed is theirs, and it is shown before anything can
+        // fail: a turn that cannot start must not swallow the message.
         self.pushMessage("user", text);
         self.composer.clear();
+
+        const rt = self.ensureLinked() orelse {
+            const why = self.linked_error orelse "the runtime could not be built";
+            self.pushMessage("error", why);
+            self.sayf("no runtime: {s}", .{why});
+            return;
+        };
+
         self.sending = true;
-        self.submit(argv.items, "agent invoke", .invoke);
+        self.turns.start(rt, text, session) catch |err| {
+            self.sending = false;
+            const why = std.fmt.allocPrint(self.gpa, "could not start the turn: {s}", .{@errorName(err)}) catch return;
+            defer self.gpa.free(why);
+            self.pushMessage("error", why);
+        };
     }
 
     pub fn newChat(self: *AppState) void {
@@ -1431,6 +1478,7 @@ test "a pushed message keeps a doc beside it" {
         .paths = undefined,
         .exe = &.{},
         .executor = runtime.Executor.init(testing.allocator, undefined, ""),
+        .turns = runtime.Turns.init(testing.allocator),
         .daemon = runtime.Daemon.init(testing.allocator, undefined, ""),
     };
     defer {
@@ -1458,6 +1506,7 @@ test "opening and closing json paths does not leak the paths" {
         .paths = undefined,
         .exe = &.{},
         .executor = runtime.Executor.init(testing.allocator, undefined, ""),
+        .turns = runtime.Turns.init(testing.allocator),
         .daemon = runtime.Daemon.init(testing.allocator, undefined, ""),
     };
     defer {
