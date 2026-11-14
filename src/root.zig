@@ -82,6 +82,8 @@ pub const subagent_runner = @import("subagent_runner.zig");
 pub const agent_runner = @import("agent_runner.zig");
 /// A runtime assembled in-process, for callers that are not the CLI.
 pub const runtime_builder = @import("runtime_builder.zig");
+/// The JSON a data page shows, built as a function rather than printed.
+pub const page_json = @import("page_json.zig");
 
 // Phase 4c: Auth
 pub const auth = @import("auth.zig");

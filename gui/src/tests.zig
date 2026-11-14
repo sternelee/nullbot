@@ -227,10 +227,14 @@ test "a page shows the runtime's rows, and its complaint when there is none" {
     try w.initWith(.{ .runtime = stub });
     defer w.deinit();
 
-    // The runtime answers nothing, so the page reports what it said and keeps
-    // its own chrome.
+    // Every page that asks for JSON is answered by a function now, so the
+    // complaint path is driven directly: it is what a page shows when the
+    // runtime cannot answer at all.
     w.app.openPage(.status);
     w.settle(2);
+    w.app.setJsonProblem("no answer for: status");
+    w.tester.frame();
+
     // The complaint is on the page, not only in a toast that expires: the
     // panel used to say "the runtime said nothing" while the real message
     // vanished after six seconds.
@@ -266,6 +270,9 @@ test "every json page paints its rows below the toolbar" {
 
         w.app.openPage(page);
         w.settle(2);
+        // A page the runtime answers as a function fills its tree inside
+        // `openPage`, so the frame `settle` drew was still the old one.
+        w.tester.frame();
 
         // A page with a reader for its answer draws a list, and a list has no
         // fold controls. Either way something has to be on the page.
@@ -358,10 +365,13 @@ test "a page's rows are laid out below its toolbar, across the page" {
     try w.initWith(.{ .runtime = stub });
     defer w.deinit();
 
-    w.app.openPage(.models);
+    w.app.openPage(.capabilities);
     w.settle(2);
+    w.tester.frame();
 
-    // Models has a reader, so it draws a list rather than a tree.
+    // Capabilities has a reader, so it draws a list rather than a tree. It
+    // also answers without a config — it lists what the build carries — so
+    // this works in a test, where there is no config to read.
     const list = w.app.rows orelse return error.NoList;
     try testing.expect(list.totalRows() >= 1);
 
@@ -369,9 +379,9 @@ test "a page's rows are laid out below its toolbar, across the page" {
     for (list.groups.items) |group| {
         for (group.rows.items) |row| {
             const rect = w.tester.findText(row.title) orelse continue;
-            // Inside the page, not under the header and not off the bottom.
+            // Below the header. A long list runs past the fold — it scrolls —
+            // so only the top edge is checked.
             try testing.expect(rect.y > 60);
-            try testing.expect(rect.y + rect.h <= 800);
             checked += 1;
         }
     }
@@ -407,6 +417,43 @@ test "the diagnostics panel names what the window is connected to" {
     try testing.expect(w.tester.containsText("s1"));
     // The theme it is drawn in, so a screenshot can be traced to a palette.
     try testing.expect(w.tester.containsText("Matrix"));
+}
+
+// The pages are answered by the linked runtime, not by a program. The stub
+// here answers nothing at all: a page that still spawned it would come back
+// with its complaint, and this would fail.
+test "every data page answers without a runtime on disk" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    var path_buffer: [256]u8 = undefined;
+    const stub = try harness.writeFailingStub(threaded.io(), &path_buffer);
+
+    var w: Window = undefined;
+    try w.initWith(.{ .runtime = stub });
+    defer w.deinit();
+
+    var checked: usize = 0;
+    for (state.nav) |page| {
+        if (page == .chat or page == .config) continue;
+        if (!page.takesJson()) continue;
+        // `workspace audit` has no JSON builder in the runtime yet, so it is
+        // the one page that still asks the CLI.
+        if (page == .workspace) continue;
+
+        w.app.openPage(page);
+        w.settle(1);
+        if (w.app.json_text.len == 0) {
+            std.debug.print("page {s}: no answer at all\n", .{@tagName(page)});
+            return error.NoAnswer;
+        }
+        if (std.mem.indexOf(u8, w.app.json_text, "no answer for") != null) {
+            std.debug.print("page {s}: still asks the CLI\n", .{@tagName(page)});
+            return error.AskedTheCli;
+        }
+        checked += 1;
+    }
+    try testing.expectEqual(@as(usize, 9), checked);
 }
 
 // The window carries the runtime as a module, not as a program it looks for.

@@ -11,9 +11,14 @@ provider, a tool set and a memory backend into a `Runtime`, and a chat turn is
 parse back, and no `nullclaw` to install — `zig build` produces one binary that
 is the whole window.
 
-The read-only pages still run the CLI, because they ask the runtime questions
-whose answers are already JSON on stdout; a turn is the one thing that had to
-be a function call. Both build with **Zig 0.17.0**.
+The data pages are answered the same way. `src/page_json.zig` builds the JSON
+those pages show — models, memory, skills, channels, cron — from the same
+sources the CLI reads, and `capabilities`, `status`, `doctor` and `mcp` already
+exposed theirs. Nine of the ten data pages therefore answer with no runtime on
+disk at all; `workspace audit` is the one that still asks the CLI, because the
+runtime has no JSON builder for it yet.
+
+Both build with **Zig 0.17.0**.
 
 ## Build and run
 
@@ -25,9 +30,11 @@ zig build test       # 67 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
-Nothing has to be installed: the runtime is linked in. `NULLCLAW_BIN` still
-points the *pages* at a different binary — a build from a checkout, say — and
-an empty value counts as unset.
+Nothing has to be installed: the runtime is linked in, and the data pages are
+answered from it. `NULLCLAW_BIN` still points the few commands that remain
+prose (`auth`, `hardware`, `service`, `update`, `workspace audit`) at a
+different binary — a build from a checkout, say — and an empty value counts as
+unset.
 
 The tests do not need a runtime installed: `src/tests.zig` writes a stub
 `nullclaw` that answers the commands the window runs, and drives the real view

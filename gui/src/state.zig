@@ -727,13 +727,54 @@ pub const AppState = struct {
     }
 
     pub fn runPage(self: *AppState) void {
-        const words = self.page.command() orelse return;
         if (self.json_running) return;
+
+        // A page whose answer the runtime can produce as a function is asked
+        // directly: no program to find, no stdout to parse. The rest still go
+        // through the CLI, which is where their answers are built.
+        if (self.answerInProcess()) |text| {
+            defer self.gpa.free(text);
+            self.setJson(text);
+            return;
+        }
+
+        const words = self.page.command() orelse return;
         var argv: std.ArrayListUnmanaged([]const u8) = .empty;
         defer argv.deinit(self.gpa);
         backend.argvCommand(self.gpa, &argv, words, self.page.takesJson()) catch return;
         self.json_running = true;
         self.submit(argv.items, self.page.label(), .page);
+    }
+
+    /// Builds a page's answer from the linked runtime, for the pages whose
+    /// JSON the runtime already exposes as a function. Null when this page
+    /// has no such function, and the caller falls back to the CLI.
+    fn answerInProcess(self: *AppState) ?[]u8 {
+        // The pages that read the config load it here rather than borrowing
+        // the runtime's: opening a page must not build a runtime, and a
+        // window that has never run a turn still has a config on disk.
+        return switch (self.page) {
+            .capabilities, .models, .memory, .mcp, .skills, .channels => blk: {
+                var cfg = yc.config.Config.load(self.gpa) catch break :blk null;
+                defer cfg.deinit();
+                break :blk switch (self.page) {
+                    // Capabilities lists what the build has even without a
+                    // config; with one it also says what the config turns on.
+                    .capabilities => yc.capabilities.buildManifestJson(self.gpa, &cfg, null) catch null,
+                    .models => yc.page_json.modelsSummary(self.gpa, &cfg) catch null,
+                    .memory => (yc.page_json.memoryStats(self.gpa, &cfg) catch null) orelse null,
+                    .mcp => yc.mcp_admin.buildServersJson(self.gpa, cfg.mcp_servers) catch null,
+                    .skills => yc.page_json.skillsList(self.gpa, &cfg) catch null,
+                    .channels => yc.page_json.channelList(self.gpa, &cfg) catch null,
+                    else => unreachable,
+                };
+            },
+            .status => yc.status.buildRuntimeStatusJson(self.gpa) catch null,
+            .doctor => yc.doctor.buildDoctorJson(self.gpa) catch null,
+            // Cron reads the jobs off disk, so it needs no config either.
+            .cron => yc.page_json.cronList(self.gpa) catch null,
+            else => null,
+        };
     }
 
     fn gotPage(self: *AppState, result: runtime.Result) void {

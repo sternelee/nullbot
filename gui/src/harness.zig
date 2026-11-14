@@ -162,6 +162,13 @@ pub const Window = struct {
     /// runtime's thread to make progress, and the loop leaves as soon as there
     /// is nothing in flight.
     pub fn settle(self: *Window, max_seconds: f32) void {
+        // One frame first, always. A page the runtime answers as a function
+        // is filled inside `openPage` and nothing is in flight, so the old
+        // early return left the previous page on screen — three screenshots
+        // came out identical because of it.
+        self.tester.frame();
+        if (!self.app.busy()) return;
+
         const frames: usize = @intFromFloat(max_seconds * 1000);
         const io = self.threaded.io();
         var i: usize = 0;
