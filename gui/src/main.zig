@@ -8,12 +8,21 @@ const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
 
+const yc = @import("nullclaw");
 const state = @import("state.zig");
 const theme = @import("theme.zig");
 const view = @import("view.zig");
 
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
+
+    // Before anything reaches for the runtime: providers and tools spawn
+    // processes through the shared compat layer, and without this it hands
+    // them a single-threaded io. Every request then fails as
+    // `CompatibleApiError`, which surfaces as "all providers failed" on the
+    // first message.
+    yc.runtime_builder.Runtime.initProcessIo(init);
+
     var app_state = try state.AppState.init(gpa, init.io, init.environ_map);
     defer app_state.deinit();
 

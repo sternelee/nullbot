@@ -39,3 +39,13 @@ test "the memory runtime lives in the struct, not in a frame" {
         try testing.expect(mem._outbox == null);
     }
 }
+
+// Regression: the window never handed its io to the shared compat layer, so
+// providers and tools spawned through a single-threaded fallback. Every
+// request came back as `CompatibleApiError` and the first message ended in
+// "all providers failed". `main` now calls `initProcessIo` before anything
+// else; this guards that the entry point still exists and is reachable.
+test "the runtime exposes the process io hook the window needs" {
+    const hook = yc.runtime_builder.Runtime.initProcessIo;
+    try testing.expect(@TypeOf(hook) == fn (std.process.Init) void);
+}

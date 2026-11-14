@@ -710,6 +710,10 @@ pub const Turns = struct {
             defer job.gpa.free(fresh);
             on_delta(ctx, fresh);
         }
+        // Outside the loop, and never skipped: a provider that does not
+        // stream produces no deltas at all, so a `continue` here used to
+        // leave its finished turn in the list forever. The answer arrived
+        // and the window never showed it.
         self.pump(ctx, handler);
     }
 

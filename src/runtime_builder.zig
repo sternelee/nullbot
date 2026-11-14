@@ -10,6 +10,7 @@
 //! now; the desktop window uses this one, so a turn is a function call rather
 //! than a subprocess.
 const std = @import("std");
+const compat = @import("compat");
 const Config = @import("config.zig").Config;
 const providers = @import("providers/root.zig");
 const Provider = providers.Provider;
@@ -58,6 +59,19 @@ pub const Runtime = struct {
     /// Where turns are remembered. Owned by `mem_rt` when there is one.
     session_store: ?memory_mod.SessionStore = null,
     response_cache: ?*memory_mod.cache.ResponseCache = null,
+
+    /// Hands the process's io to the shared compat layer.
+    ///
+    /// Everything below the agent — providers, tools, the memory backends —
+    /// reaches for `compat.io()` when it needs to spawn a process or open a
+    /// socket. Until this is called that returns a single-threaded fallback,
+    /// and a provider that shells out to curl fails on it: every request comes
+    /// back as `CompatibleApiError` and the turn ends in `AllProvidersFailed`.
+    /// The CLI calls this at startup; a program that links the runtime has to
+    /// call it too, before the first turn.
+    pub fn initProcessIo(process: std.process.Init) void {
+        compat.initProcess(process);
+    }
 
     /// Builds a runtime from the config on disk. The caller owns it and must
     /// call `deinit`.
@@ -159,7 +173,6 @@ pub const Runtime = struct {
 
         var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, observer.observer());
         errdefer agent.deinit();
-        agent.policy = &policy;
 
         // The runtime is assembled here and moved into the struct below, so
         // the pointers into it are set after the move, from the caller's own
@@ -189,6 +202,12 @@ pub const Runtime = struct {
     /// frame that is gone by the time a turn runs. `init` deliberately does
     /// not call it for that reason.
     pub fn wireMemory(self: *Runtime) void {
+        // The policy is the same hazard as the memory runtime: the agent has
+        // to point at this struct's copy, not at the local `init` built it in.
+        // A dangling policy reads as garbage autonomy, which shows up much
+        // later as every provider failing.
+        self.agent.policy = &self.policy;
+
         if (self.mem_rt_storage) |*rt| {
             self.mem_rt = rt;
             self.agent.mem_rt = rt;
