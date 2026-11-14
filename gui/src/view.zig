@@ -415,6 +415,40 @@ fn transcript(s: *AppState, c: *ui.Context) void {
         const doc: ?*const md.Doc = if (i < s.docs.items.len) &s.docs.items[i] else null;
         messageBubble(s, c, message, doc);
     }
+
+    // The answer being written, drawn where the finished one will land.
+    if (s.streaming()) streamingBubble(s, c);
+}
+
+/// The assistant's answer as it arrives: the same bubble, with a caret at the
+/// end so a pause reads as "still writing" rather than "done".
+fn streamingBubble(s: *AppState, c: *ui.Context) void {
+    const doc: ?*const md.Doc = if (s.stream_doc) |*d| d else null;
+    const row = ui.div(c).row().wFull();
+    defer row.end();
+
+    const width = bubbleWidth(s, c, doc, s.stream_text.items);
+    const bubble = ui.div(c).column().w(width).gap(8).p(13).rounded(13).bg(s.palette.bot_bubble);
+    defer bubble.end();
+
+    if (doc) |d| {
+        for (d.blocks) |block| block_(s, c, block);
+    } else {
+        ui.text(c, s.stream_text.items, .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.4 });
+    }
+
+    // The caret: a small block that blinks with the clock, so a stalled
+    // provider and a finished answer do not look the same.
+    const caret = ui.div(c).row().gap(4).itemsCenter();
+    defer caret.end();
+    // The frame's own clock: no wall clock to read, and it stops when the
+    // window stops drawing, which is exactly when the caret should stop.
+    const blink = @mod(c.time, 1.0) < 0.55;
+    // A block that is drawn or not: the same width either way, so the text
+    // above it does not reflow when the caret blinks.
+    var caret_box = ui.div(c).w(7).h(14);
+    if (blink) caret_box = caret_box.rounded(2).bg(s.palette.accent);
+    caret_box.end();
 }
 
 fn messageBubble(s: *AppState, c: *ui.Context, message: backend.Message, doc: ?*const md.Doc) void {
@@ -572,14 +606,37 @@ fn composer(s: *AppState, c: *ui.Context) void {
     defer foot.end();
     composerHint(s, c);
     ui.spacer(c);
+
+    // Where this message will land. A new chat has a draft key the runtime
+    // has not seen yet, so the line says which conversation is being opened
+    // rather than leaving the person to guess.
     if (s.sending) {
-        ui.text(c, "thinking…", .{ .size = 11.5, .color = s.palette.accent });
+        const writing = ui.div(c).row().gap(6).itemsCenter();
+        defer writing.end();
+        ui.icon(c, "ellipsis.circle", .{ .size = 11, .color = s.palette.accent });
+        ui.text(c, if (s.streaming()) "writing…" else "thinking…", .{
+            .size = 11.5,
+            .color = s.palette.accent,
+        });
     }
+
+    // While a turn runs the primary button stops it: a long answer with no
+    // way out is the one thing a chat window must not do.
+    if (s.sending) {
+        const halt = ui.button(c, "", .{
+            .variant = .secondary,
+            .icon = "stop.circle",
+            .size = 12,
+        });
+        if (halt.clicked) s.stop();
+        return;
+    }
+
     const send = ui.button(c, "", .{
         .variant = .primary,
         .icon = "arrow.up",
         .size = 12,
-        .disabled = s.sending or s.composer.text().len == 0,
+        .disabled = s.composer.text().len == 0,
     });
     if (send.clicked or typed.submitted) s.send();
 }
@@ -587,7 +644,10 @@ fn composer(s: *AppState, c: *ui.Context) void {
 fn composerHint(s: *AppState, c: *ui.Context) void {
     const typed = s.composer.text();
     if (typed.len == 0) {
-        ui.text(c, "return to send · shift-return for a new line", .{ .size = 10.5, .color = s.palette.faint });
+        // The session name, so a window with several chats open says which
+        // one the next message belongs to.
+        const where = s.turnSession() orelse "new conversation";
+        ui.textf(c, .{ .size = 10.5, .color = s.palette.faint }, "{s} · return to send · shift-return for a new line", .{where});
         return;
     }
     ui.textf(c, .{ .size = 10.5, .color = s.palette.faint, .tabular = true }, "{d} characters", .{typed.len});

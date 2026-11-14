@@ -555,6 +555,11 @@ pub const Daemon = struct {
 // and the view is rebuilt every frame.
 
 /// One turn running on its own thread, with the reply it produced.
+///
+/// The reply arrives twice: as it is written (`streamed`, read by the view
+/// while the turn is still running) and whole when the turn ends (`reply`).
+/// The provider calls the stream callback on the turn's own thread, so the
+/// buffer is behind a mutex and the view takes a copy rather than a pointer.
 pub const Turn = struct {
     gpa: std.mem.Allocator,
     /// The runtime the turn runs against. Owned by the state, not by this.
@@ -567,6 +572,21 @@ pub const Turn = struct {
     reply: []u8 = &.{},
     failure: ?anyerror = null,
 
+    /// Everything the provider has streamed so far. Written by the turn's
+    /// thread, read by the view under `lock`.
+    streamed: std.ArrayListUnmanaged(u8) = .empty,
+    /// A try-lock rather than a blocking one: the view must never wait on a
+    /// provider that is mid-chunk, so a frame that cannot take it draws what
+    /// it had and asks again next frame.
+    lock: std.atomic.Mutex = .unlocked,
+    /// How much of `streamed` the view has already been given, so a frame
+    /// takes only what is new.
+    delivered: usize = 0,
+    /// Set when the person stops the turn. The provider is mid-request and
+    /// cannot be interrupted from here, so the turn is abandoned instead:
+    /// what it still writes is dropped, and the reply is not shown.
+    abandoned: std.atomic.Value(bool) = .init(false),
+
     fn joinOnce(self: *Turn) void {
         if (self.joined) return;
         self.thread.join();
@@ -577,13 +597,48 @@ pub const Turn = struct {
         self.gpa.free(self.message);
         if (self.session) |s| self.gpa.free(s);
         self.gpa.free(self.reply);
+        self.streamed.deinit(self.gpa);
         self.gpa.destroy(self);
     }
+
+    /// The text streamed since the last call, copied out for the view.
+    /// The caller owns the slice. Empty when nothing is new, or when the
+    /// turn's thread holds the lock this frame.
+    fn takeNew(self: *Turn) ![]u8 {
+        if (self.abandoned.load(.acquire)) return &.{};
+        if (!self.lock.tryLock()) return &.{};
+        defer self.lock.unlock();
+        if (self.delivered >= self.streamed.items.len) return &.{};
+        const fresh = self.streamed.items[self.delivered..];
+        self.delivered = self.streamed.items.len;
+        return self.gpa.dupe(u8, fresh);
+    }
 };
+
+/// The provider's stream callback. `ctx` is the `*Turn` that owns the turn.
+fn onChunk(ctx: *anyopaque, chunk: yc.providers.StreamChunk) void {
+    const t: *Turn = @ptrCast(@alignCast(ctx));
+    if (chunk.delta.len == 0) return;
+    if (t.abandoned.load(.acquire)) return;
+    // The provider calls this on the turn's thread, and the view only ever
+    // try-locks, so spinning here is bounded by one frame.
+    while (!t.lock.tryLock()) std.atomic.spinLoopHint();
+    defer t.lock.unlock();
+    t.streamed.appendSlice(t.gpa, chunk.delta) catch {};
+}
 
 fn turnWork(t: *Turn) void {
     defer t.done.store(true, .release);
     if (t.session) |key| t.runtime.useSession(key);
+    // Streaming is opt-in per turn: the agent only calls `streamChat` when a
+    // callback is set, and providers that cannot stream fall back to one
+    // chunk, so this is safe for every provider.
+    t.runtime.agent.stream_callback = onChunk;
+    t.runtime.agent.stream_ctx = t;
+    defer {
+        t.runtime.agent.stream_callback = null;
+        t.runtime.agent.stream_ctx = null;
+    }
     const reply = t.runtime.turn(t.message) catch |err| {
         t.failure = err;
         return;
@@ -638,6 +693,33 @@ pub const Turns = struct {
         try self.jobs.append(self.gpa, job);
     }
 
+    /// Hands the text streamed since the last frame to `on_delta`, then every
+    /// finished turn to `handler`, oldest first.
+    ///
+    /// A turn is only in `jobs` while it runs, so a streaming turn is the one
+    /// at the end: the deltas are read before the turn is freed.
+    pub fn pumpStreaming(
+        self: *Turns,
+        ctx: anytype,
+        comptime on_delta: fn (@TypeOf(ctx), []const u8) void,
+        comptime handler: fn (@TypeOf(ctx), TurnResult) void,
+    ) void {
+        for (self.jobs.items) |job| {
+            const fresh = job.takeNew() catch &.{};
+            if (fresh.len == 0) continue;
+            defer job.gpa.free(fresh);
+            on_delta(ctx, fresh);
+        }
+        self.pump(ctx, handler);
+    }
+
+    /// Stops every running turn: what they still write is dropped and their
+    /// replies are not shown. The threads finish on their own, because a
+    /// provider request in flight cannot be cancelled from here.
+    pub fn stop(self: *Turns) void {
+        for (self.jobs.items) |job| job.abandoned.store(true, .release);
+    }
+
     /// Hands every finished turn to `handler`, oldest first, and frees it.
     pub fn pump(self: *Turns, ctx: anytype, comptime handler: fn (@TypeOf(ctx), TurnResult) void) void {
         var i: usize = 0;
@@ -651,6 +733,7 @@ pub const Turns = struct {
             handler(ctx, .{
                 .reply = job.reply,
                 .failure = job.failure,
+                .abandoned = job.abandoned.load(.acquire),
             });
             _ = self.jobs.swapRemove(i);
             job.free();
@@ -662,4 +745,68 @@ pub const Turns = struct {
 pub const TurnResult = struct {
     reply: []const u8,
     failure: ?anyerror,
+    /// The person stopped it before it finished.
+    abandoned: bool = false,
 };
+
+// ── tests ───────────────────────────────────────────────────────────────
+
+test "streamed text is handed out once, in order" {
+    const gpa = std.testing.allocator;
+    // A turn with no runtime: the buffer is what is under test, and building
+    // a runtime needs a config on disk.
+    var turn: Turn = undefined;
+    turn.gpa = gpa;
+    turn.runtime = undefined;
+    turn.message = &.{};
+    turn.session = null;
+    turn.thread = undefined;
+    turn.joined = true;
+    turn.reply = &.{};
+    turn.failure = null;
+    turn.streamed = .empty;
+    turn.lock = .unlocked;
+    turn.delivered = 0;
+    defer turn.streamed.deinit(gpa);
+
+    // What the provider would call, twice.
+    onChunk(@ptrCast(&turn), .{ .delta = "Hel", .is_final = false, .token_count = 1 });
+    onChunk(@ptrCast(&turn), .{ .delta = "lo", .is_final = false, .token_count = 1 });
+
+    const first = try turn.takeNew();
+    defer gpa.free(first);
+    try std.testing.expectEqualStrings("Hello", first);
+
+    // Nothing new since the last frame: a second read must not repeat it.
+    const second = try turn.takeNew();
+    defer gpa.free(second);
+    try std.testing.expectEqualStrings("", second);
+
+    onChunk(@ptrCast(&turn), .{ .delta = "!", .is_final = false, .token_count = 1 });
+    const third = try turn.takeNew();
+    defer gpa.free(third);
+    try std.testing.expectEqualStrings("!", third);
+}
+
+test "an empty delta is not delivered" {
+    const gpa = std.testing.allocator;
+    var turn: Turn = undefined;
+    turn.gpa = gpa;
+    turn.runtime = undefined;
+    turn.message = &.{};
+    turn.session = null;
+    turn.thread = undefined;
+    turn.joined = true;
+    turn.reply = &.{};
+    turn.failure = null;
+    turn.streamed = .empty;
+    turn.lock = .unlocked;
+    turn.delivered = 0;
+    defer turn.streamed.deinit(gpa);
+
+    // The final chunk carries no text; a frame that showed it would flicker.
+    onChunk(@ptrCast(&turn), .{ .delta = "", .is_final = true, .token_count = 0 });
+    const got = try turn.takeNew();
+    defer gpa.free(got);
+    try std.testing.expectEqualStrings("", got);
+}

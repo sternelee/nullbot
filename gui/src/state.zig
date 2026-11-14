@@ -200,6 +200,18 @@ pub const AppState = struct {
     /// The selected session's transcript, and each message's reply parsed for
     /// drawing. Parsing is cached here so a frame never re-reads markdown.
     messages: std.ArrayListUnmanaged(backend.Message) = .empty,
+    /// The answer as it is being written, before the turn ends. Empty when
+    /// nothing is streaming. The view draws it after the last message, with
+    /// the caret, so a long turn shows progress instead of a spinner.
+    stream_text: std.ArrayListUnmanaged(u8) = .empty,
+    /// The key a new conversation will be filed under. Without one every turn
+    /// lands in the same session, which is why "New chat" used to reopen the
+    /// old transcript: the runtime had nowhere else to put the messages.
+    draft_session: std.ArrayListUnmanaged(u8) = .empty,
+    /// Bumped for every new conversation, so two drafts in one run differ.
+    draft_seq: u64 = 0,
+    /// The streaming text parsed for the view, kept in step with `stream_text`.
+    stream_doc: ?md.Doc = null,
     docs: std.ArrayListUnmanaged(md.Doc) = .empty,
     sessions_running: bool = false,
     transcript_running: bool = false,
@@ -329,6 +341,9 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
+        self.stream_text.deinit(self.gpa);
+        self.draft_session.deinit(self.gpa);
+        if (self.stream_doc) |*d| d.deinit();
         self.edit_path.deinit();
         self.edit_value.deinit();
         self.cfg_default_model.deinit();
@@ -359,7 +374,7 @@ pub const AppState = struct {
     /// Folds finished commands in. Call once at the top of a frame.
     pub fn pump(self: *AppState) void {
         self.executor.pump();
-        self.turns.pump(self, onTurnDone);
+        self.turns.pumpStreaming(self, onDelta, onTurnDone);
         // Keep the embedded runtime alive while the GUI is open.
         self.ensureDaemonRunning();
     }
@@ -370,6 +385,12 @@ pub const AppState = struct {
     /// "working…" forever.
     pub fn busy(self: *AppState) bool {
         return self.executor.busy() or self.turns.busy();
+    }
+
+    /// True while an answer is arriving, so the view draws the caret and
+    /// keeps asking for frames.
+    pub fn streaming(self: *AppState) bool {
+        return self.stream_text.items.len > 0;
     }
 
     /// Builds the linked runtime on first use. A config that cannot carry a
@@ -387,6 +408,15 @@ pub const AppState = struct {
 
     fn onTurnDone(self: *AppState, result: runtime.TurnResult) void {
         self.sending = false;
+        // Whatever streamed is now part of the transcript, so the live copy
+        // goes away before the finished message takes its place.
+        self.clearStream();
+        if (result.abandoned) {
+            // The person stopped it: the partial text was theirs to throw
+            // away, and an error line would blame the runtime for it.
+            self.say("stopped");
+            return;
+        }
         if (result.failure) |err| {
             const text = std.fmt.allocPrint(self.gpa, "{s}", .{@errorName(err)}) catch return;
             defer self.gpa.free(text);
@@ -623,6 +653,22 @@ pub const AppState = struct {
         self.messages.clearRetainingCapacity();
         for (self.docs.items) |*d| d.deinit();
         self.docs.clearRetainingCapacity();
+        self.clearStream();
+    }
+
+    pub fn clearStream(self: *AppState) void {
+        self.stream_text.clearRetainingCapacity();
+        if (self.stream_doc) |*d| d.deinit();
+        self.stream_doc = null;
+    }
+
+    /// Appends what the provider just wrote to the answer being streamed.
+    pub fn onDelta(self: *AppState, delta: []const u8) void {
+        self.stream_text.appendSlice(self.gpa, delta) catch return;
+        // Re-parsed every frame: markdown is cheap at this size, and a
+        // half-written fence or list should look right as it arrives.
+        if (self.stream_doc) |*d| d.deinit();
+        self.stream_doc = md.parse(self.gpa, self.stream_text.items) catch null;
     }
 
     /// Appends a turn and parses it for the view. Every message has exactly
@@ -659,10 +705,7 @@ pub const AppState = struct {
         const text = std.mem.trim(u8, self.composer.text(), " \t\r\n");
         if (text.len == 0 or self.sending) return;
 
-        const session: ?[]const u8 = if (self.selected) |i|
-            (if (i < self.sessions.items.len) self.sessions.items[i].key else null)
-        else
-            null;
+        const session = self.turnSession();
 
         // What the person typed is theirs, and it is shown before anything can
         // fail: a turn that cannot start must not swallow the message.
@@ -685,11 +728,45 @@ pub const AppState = struct {
         };
     }
 
+    /// Stops the turn that is running. The provider request cannot be
+    /// cancelled, so the turn is abandoned: its output stops arriving here.
+    pub fn stop(self: *AppState) void {
+        if (!self.sending) return;
+        self.turns.stop();
+        self.sending = false;
+        self.clearStream();
+        self.say("stopped");
+    }
+
     pub fn newChat(self: *AppState) void {
         self.selected = null;
         self.clearMessages();
         self.composer.clear();
         self.page = .chat;
+        self.makeDraftSession();
+    }
+
+    /// Names the conversation that has not been sent yet. The key is a
+    /// timestamp: it sorts by when the chat started, and it cannot collide
+    /// with a session the runtime already has.
+    fn makeDraftSession(self: *AppState) void {
+        self.draft_session.clearRetainingCapacity();
+        var buf: [40]u8 = undefined;
+        // A counter rather than a clock: the window has no wall clock, and a
+        // session key only has to be unique within this run.
+        const stamp = std.fmt.bufPrint(&buf, "gui:{d}", .{self.draft_seq}) catch return;
+        self.draft_seq += 1;
+        self.draft_session.appendSlice(self.gpa, stamp) catch {};
+    }
+
+    /// The session the next turn belongs to: the one that is open, or the
+    /// draft a new chat made.
+    pub fn turnSession(self: *AppState) ?[]const u8 {
+        if (self.selected) |i| {
+            if (i < self.sessions.items.len) return self.sessions.items[i].key;
+        }
+        if (self.draft_session.items.len > 0) return self.draft_session.items;
+        return null;
     }
 
     fn gotInvoke(self: *AppState, result: runtime.Result) void {

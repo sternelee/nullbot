@@ -69,6 +69,15 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02-chat-markdown");
 
+    // An answer mid-flight: the transcript, then the bubble being written,
+    // with the composer offering to stop it.
+    w.app.sending = true;
+    w.app.onDelta("Reading the config, then the workspace.\n\nThe provider is ");
+    w.tester.settle(0.3);
+    try shoot(&w, "12-streaming");
+    w.app.sending = false;
+    w.app.clearStream();
+
     // The configuration page, loading the real file through `gotConfig`.
     w.app.openPage(.config);
     w.settle(1);

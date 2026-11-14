@@ -11,6 +11,18 @@ provider, a tool set and a memory backend into a `Runtime`, and a chat turn is
 parse back, and no `nullclaw` to install — `zig build` produces one binary that
 is the whole window.
 
+A turn streams. `Agent` already had the hook — `stream_callback` plus
+`stream_ctx`, and `turn()` switches to `streamChat` when they are set — so the
+window sets them and reads the deltas at the top of each frame. The answer is
+drawn as it is written, with a caret, and the composer's button becomes stop
+while a turn runs. Stopping abandons the turn rather than cancelling the
+provider request: a request in flight cannot be interrupted from here, so what
+it still writes is dropped and the reply is not shown.
+
+A new chat gets its own session key. Without one every turn landed in the
+same session, which is why "New chat" used to reopen the transcript it was
+supposed to leave behind.
+
 The data pages are answered the same way. `src/page_json.zig` builds the JSON
 those pages show — models, memory, skills, channels, cron — from the same
 sources the CLI reads; `capabilities`, `status`, `doctor`, `mcp` and
@@ -57,6 +69,7 @@ the app runs:
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
 | `10-config-full.png` | The configuration page in a tall window, so every section is visible at once |
 | `11-workspace.png` | The workspace audit: findings grouped by severity, each with its rule and `path:line` |
+| `12-streaming.png` | An answer mid-flight: the bubble being written, the caret, and the composer offering to stop |
 
 The shots are taken through the same path the app uses — a runtime answering
 from a process, and a config file on disk — rather than by handing the pages

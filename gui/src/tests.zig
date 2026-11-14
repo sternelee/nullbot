@@ -151,7 +151,15 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
     const heading = w.tester.findText("Sessions") orelse return error.NoSessions;
     const question = w.tester.findText("a question") orelse return error.NoQuestion;
     const answer = w.tester.findText("an answer") orelse return error.NoAnswer;
-    const hint = w.tester.findText("return to send · shift-return for a new line") orelse return error.NoComposer;
+    // The hint now leads with the session the message will land in, so it is
+    // found by the part that is always there rather than by its whole text.
+    const hint = blk: {
+        for (w.tester.ctx.nodes.items) |n| switch (n.content) {
+            .text => |tx| if (std.mem.indexOf(u8, tx.str, "return to send") != null) break :blk n.rect,
+            else => {},
+        };
+        break :blk null;
+    } orelse return error.NoComposer;
 
     // The sidebar is the left column: its section heading starts at the
     // sidebar's own padding, and the brand sits in from there, past its icon.
@@ -624,4 +632,48 @@ test "the config page paints the file it loaded" {
         if (std.mem.indexOf(u8, row.text, "agents") != null) saw_agents = true;
     }
     try testing.expect(saw_agents);
+}
+
+test "a new chat gets its own session, not the one that was open" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // Two new chats in a row must not share a key: that is what made the
+    // second one reopen the first one's transcript.
+    w.app.newChat();
+    const first = w.app.turnSession() orelse return error.NoSession;
+    const first_owned = try testing.allocator.dupe(u8, first);
+    defer testing.allocator.free(first_owned);
+
+    w.app.newChat();
+    const second = w.app.turnSession() orelse return error.NoSession;
+
+    try testing.expect(!std.mem.eql(u8, first_owned, second));
+    // A draft is named for the window, so a session the runtime already has
+    // is never mistaken for one this window made.
+    try testing.expect(std.mem.startsWith(u8, second, "gui:"));
+}
+
+test "an open session wins over the draft" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.newChat();
+    const draft = try testing.allocator.dupe(u8, w.app.turnSession() orelse return error.NoSession);
+    defer testing.allocator.free(draft);
+
+    // Selecting a real session must send the next turn there, not to the
+    // draft the new chat made.
+    try w.app.sessions.append(testing.allocator, .{
+        .key = try testing.allocator.dupe(u8, "api:default"),
+        .created_at = try testing.allocator.dupe(u8, ""),
+        .last_active = try testing.allocator.dupe(u8, ""),
+    });
+    w.app.selected = 0;
+
+    const chosen = w.app.turnSession() orelse return error.NoSession;
+    try testing.expectEqualStrings("api:default", chosen);
+    try testing.expect(!std.mem.eql(u8, draft, chosen));
 }
