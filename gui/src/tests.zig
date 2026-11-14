@@ -15,6 +15,7 @@ test {
     _ = @import("view.zig");
     _ = @import("contract.zig");
     _ = @import("shot.zig");
+    _ = @import("wiring.zig");
 }
 
 test "the window draws its shell, sidebar and composer" {

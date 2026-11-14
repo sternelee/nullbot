@@ -403,7 +403,13 @@ pub const AppState = struct {
             self.linked_error = std.fmt.allocPrint(self.gpa, "{s}", .{@errorName(err)}) catch null;
             return null;
         };
-        return &self.linked.?;
+        // Now that the runtime sits in this window's own field, point the
+        // agent and the memory tools at it. Doing this inside `init` would
+        // aim them at a frame that no longer exists, which is what made the
+        // first turn read a freed stack slot as the outbox handle.
+        const rt = &self.linked.?;
+        rt.wireMemory();
+        return rt;
     }
 
     fn onTurnDone(self: *AppState, result: runtime.TurnResult) void {

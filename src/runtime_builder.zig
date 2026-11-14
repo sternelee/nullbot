@@ -44,6 +44,12 @@ pub const Runtime = struct {
     policy: security.SecurityPolicy,
     tracker: security.RateTracker,
     subagent_manager: subagent_mod.SubagentManager,
+    /// The memory runtime, held by value so its address stays valid for as
+    /// long as the runtime lives. `agent.mem_rt` and the memory tools point
+    /// at this field, not at a local in `init`: a pointer to a local dangles
+    /// the moment `init` returns, and the first turn then reads a freed
+    /// stack slot as if it were the outbox handle.
+    mem_rt_storage: ?memory_mod.MemoryRuntime = null,
     mem_rt: ?*memory_mod.MemoryRuntime = null,
     /// The bootstrap provider the tools were built with, freed with them.
     bootstrap_provider: ?bootstrap_mod.BootstrapProvider = null,
@@ -154,11 +160,11 @@ pub const Runtime = struct {
         var agent = try Agent.fromConfig(allocator, &cfg, provider_i, tools, mem_opt, observer.observer());
         errdefer agent.deinit();
         agent.policy = &policy;
-        agent.session_store = if (mem_rt) |rt| rt.session_store else null;
-        agent.response_cache = if (mem_rt) |*rt| rt.response_cache else null;
-        agent.mem_rt = if (mem_rt) |*rt| rt else null;
 
-        return .{
+        // The runtime is assembled here and moved into the struct below, so
+        // the pointers into it are set after the move, from the caller's own
+        // copy. Setting them here would point at this frame.
+        const built = Runtime{
             .allocator = allocator,
             .config = cfg,
             .provider_bundle = provider_bundle,
@@ -166,13 +172,31 @@ pub const Runtime = struct {
             .policy = policy,
             .tracker = tracker,
             .subagent_manager = subagent_manager,
-            .mem_rt = if (mem_rt) |*rt| rt else null,
+            .mem_rt_storage = mem_rt,
             .bootstrap_provider = bootstrap_provider,
             .tools = tools,
             .agent = agent,
             .session_store = if (mem_rt) |rt| rt.session_store else null,
             .response_cache = if (mem_rt) |*rt| rt.response_cache else null,
         };
+        return built;
+    }
+
+    /// Points the agent and the memory tools at this struct's own field.
+    ///
+    /// The caller must call this once the runtime sits at the address it will
+    /// keep: `init` returns by value, so a pointer taken inside it aims at a
+    /// frame that is gone by the time a turn runs. `init` deliberately does
+    /// not call it for that reason.
+    pub fn wireMemory(self: *Runtime) void {
+        if (self.mem_rt_storage) |*rt| {
+            self.mem_rt = rt;
+            self.agent.mem_rt = rt;
+            tools_mod.bindMemoryRuntime(self.tools, rt);
+        } else {
+            self.mem_rt = null;
+            self.agent.mem_rt = null;
+        }
     }
 
     /// Runs one message and returns the reply. The caller owns the slice.
