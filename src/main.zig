@@ -5410,36 +5410,9 @@ fn runAuth(allocator: std.mem.Allocator, sub_args: []const []const u8) !void {
             runAuthDeviceCodeLogin(allocator, codex, auth_mod);
         }
     } else if (std.mem.eql(u8, subcmd, "status")) {
-        if (auth_mod.loadCredential(allocator, codex.CREDENTIAL_KEY) catch null) |token| {
-            defer token.deinit(allocator);
-            std.debug.print("openai-codex: authenticated\n", .{});
-            if (token.expires_at != 0) {
-                const remaining = token.expires_at - std_compat.time.timestamp();
-                if (remaining > 0) {
-                    std.debug.print("  Token expires in: {d}h {d}m\n", .{
-                        @divTrunc(remaining, 3600),
-                        @divTrunc(@mod(remaining, 3600), 60),
-                    });
-                } else {
-                    std.debug.print("  Token: expired (will auto-refresh)\n", .{});
-                }
-            }
-            if (token.refresh_token != null) {
-                std.debug.print("  Refresh token: present\n", .{});
-            }
-            const account_id = codex.extractAccountIdFromJwt(allocator, token.access_token) catch null;
-            defer if (account_id) |id| allocator.free(id);
-            if (account_id) |id| {
-                std.debug.print("  Account: {s}\n", .{id});
-            }
-        } else if (yc.codex_support.hasOpenAiCodexCredential(allocator)) {
-            std.debug.print("openai-codex: authenticated via Codex CLI\n", .{});
-            std.debug.print("  Tokens found in ~/.codex/auth.json\n", .{});
-            std.debug.print("  Run `nullclaw auth login openai-codex --import-codex` to persist them in auth.json in your nullclaw config directory.\n", .{});
-        } else {
-            std.debug.print("openai-codex: not authenticated\n", .{});
-            std.debug.print("  Run `nullclaw auth login openai-codex` to authenticate.\n", .{});
-        }
+        const status = try yc.page_json.authStatusText(allocator);
+        defer allocator.free(status);
+        std.debug.print("{s}", .{status});
     } else if (std.mem.eql(u8, subcmd, "logout")) {
         if (auth_mod.deleteCredential(allocator, codex.CREDENTIAL_KEY) catch false) {
             std.debug.print("openai-codex: credentials removed.\n", .{});

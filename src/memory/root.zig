@@ -14,6 +14,7 @@ const config_types = @import("../config_types.zig");
 const fs_compat = @import("../fs_compat.zig");
 const governance = @import("../governance.zig");
 const provider_api_key = @import("../providers/api_key.zig");
+const json_util = @import("../json_util.zig");
 const log = std.log.scoped(.memory);
 
 // engines/ (Layer A: Primary Store)

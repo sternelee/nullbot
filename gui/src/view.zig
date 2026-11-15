@@ -117,7 +117,7 @@ fn diagnosticsPanel(s: *AppState, c: *ui.Context) void {
     diagLine(s, c, "Config", s.paths.config, true);
     diagLine(s, c, "Workspace", s.paths.workspace, true);
     kit.separator(c, .{});
-    diagLine(s, c, "Gateway", if (s.daemon.running()) "running" else "stopped", false);
+    diagLine(s, c, "Gateway", if (s.gatewayRunning()) "running" else "stopped", false);
     diagLine(s, c, "Session", sessionKey(s) orelse "none selected", true);
     diagLine(s, c, "Turns", turnCount(s, c), false);
     kit.separator(c, .{});
@@ -186,11 +186,7 @@ fn sessionsHeading(s: *AppState, c: *ui.Context) void {
         .tracking = 0.7,
     });
     ui.spacer(c);
-    if (s.sessions_running) {
-        ui.text(c, "…", .{ .size = 11, .color = s.palette.faint });
-    } else {
-        ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d}", .{s.sessions.items.len});
-    }
+    ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d}", .{s.sessions.items.len});
 }
 
 fn sessionList(s: *AppState, c: *ui.Context) void {
@@ -200,12 +196,8 @@ fn sessionList(s: *AppState, c: *ui.Context) void {
     if (s.sessions.items.len == 0) {
         const empty = ui.div(c).column().wFull().p(10).gap(4);
         defer empty.end();
-        if (s.sessions_running) {
-            ui.text(c, "Reading sessions…", .{ .size = 12, .color = s.palette.faint });
-        } else {
-            ui.text(c, "No sessions yet", .{ .size = 12, .color = s.palette.faint });
-            ui.text(c, "Send a message to start one.", .{ .size = 11, .color = s.palette.faint });
-        }
+        ui.text(c, "No sessions yet", .{ .size = 12, .color = s.palette.faint });
+        ui.text(c, "Send a message to start one.", .{ .size = 11, .color = s.palette.faint });
         return;
     }
 
@@ -696,18 +688,19 @@ fn jsonView(s: *AppState, c: *ui.Context) void {
     const lines = if (s.json_lines) |*l| l else return;
 
     if (lines.problem != null) {
+        const prose = std.mem.eql(u8, lines.problem.?, "prose");
         // The command failed: its own words are the content, so they get a
         // card that says so rather than a blank pane with a toast that
         // disappears. The card hugs its text instead of filling the window.
         const card = ui.div(c).column().wFull().gap(8).p(14).rounded(10)
-            .bg(s.palette.danger.alpha(0.08))
-            .border(s.palette.danger.alpha(0.35)).borderW(1);
+            .bg(if (prose) s.palette.panel else s.palette.danger.alpha(0.08))
+            .border(if (prose) s.palette.border else s.palette.danger.alpha(0.35)).borderW(1);
         defer card.end();
         {
             const head = ui.div(c).row().wFull().gap(7).itemsCenter();
             defer head.end();
-            ui.icon(c, "exclamationmark.triangle.fill", .{ .size = 12, .color = s.palette.danger });
-            ui.text(c, "The runtime's command failed", .{
+            ui.icon(c, if (prose) "doc.text" else "exclamationmark.triangle.fill", .{ .size = 12, .color = if (prose) s.palette.accent else s.palette.danger });
+            ui.text(c, if (prose) "The runtime's answer" else "The runtime's command failed", .{
                 .size = 12.5,
                 .weight = .semibold,
                 .color = s.palette.danger,
@@ -979,7 +972,7 @@ fn configStatusChip(s: *AppState, c: *ui.Context) void {
 /// nanoterm-style runtime card: title, state and controls on one line, the
 /// explanation under them, then the facts.
 fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
-    const running = s.daemon.running();
+    const running = s.gatewayRunning();
     const card = configCard(c, s);
     defer card.end();
     {
@@ -998,7 +991,7 @@ fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
         }
         if (running) {
             if (ui.button(c, "Stop", .{ .size = 12, .variant = .secondary }).clicked) {
-                s.daemon.stop();
+                s.stopGateway();
                 s.say("runtime stopped");
             }
         }

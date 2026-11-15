@@ -10,6 +10,10 @@
 const std = @import("std");
 const Config = @import("config.zig").Config;
 const memory_mod = @import("memory/root.zig");
+const auth_mod = @import("auth.zig");
+const codex = @import("providers/openai_codex.zig");
+const codex_support = @import("codex_support.zig");
+const std_compat = @import("compat");
 
 /// `models summary --json`: the default provider and model, then one record
 /// per configured provider with whether it has a key.
@@ -174,6 +178,56 @@ pub fn cronList(allocator: std.mem.Allocator) ![]u8 {
     try cron.loadJobs(&scheduler);
 
     return cron.buildJobsJson(allocator, scheduler.listJobs());
+}
+
+/// `auth status openai-codex`: the same status the command line prints, as
+/// text a caller owns. Reading the credential is a file query, so this is
+/// safe to call on the window's frame.
+pub fn authStatusText(allocator: std.mem.Allocator) ![]u8 {
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    errdefer out.deinit(allocator);
+
+    if (auth_mod.loadCredential(allocator, codex.CREDENTIAL_KEY) catch null) |token| {
+        defer token.deinit(allocator);
+        try out.appendSlice(allocator, "openai-codex: authenticated\n");
+        if (token.expires_at != 0) {
+            const remaining = token.expires_at - std_compat.time.timestamp();
+            if (remaining > 0) {
+                const expires = try std.fmt.allocPrint(allocator, "  Token expires in: {d}h {d}m\n", .{
+                    @divTrunc(remaining, 3600),
+                    @divTrunc(@mod(remaining, 3600), 60),
+                });
+                defer allocator.free(expires);
+                try out.appendSlice(allocator, expires);
+            } else {
+                try out.appendSlice(allocator, "  Token: expired (will auto-refresh)\n");
+            }
+        }
+        if (token.refresh_token != null) {
+            try out.appendSlice(allocator, "  Refresh token: present\n");
+        }
+        const account_id = codex.extractAccountIdFromJwt(allocator, token.access_token) catch null;
+        defer if (account_id) |id| allocator.free(id);
+        if (account_id) |id| {
+            const account = try std.fmt.allocPrint(allocator, "  Account: {s}\n", .{id});
+            defer allocator.free(account);
+            try out.appendSlice(allocator, account);
+        }
+    } else if (codex_support.hasOpenAiCodexCredential(allocator)) {
+        try out.appendSlice(allocator,
+            \\openai-codex: authenticated via Codex CLI
+            \\  Tokens found in ~/.codex/auth.json
+            \\  Run `nullclaw auth login openai-codex --import-codex` to persist them in auth.json in your nullclaw config directory.
+            \\
+        );
+    } else {
+        try out.appendSlice(allocator,
+            \\openai-codex: not authenticated
+            \\  Run `nullclaw auth login openai-codex` to authenticate.
+            \\
+        );
+    }
+    return out.toOwnedSlice(allocator);
 }
 
 fn writeString(w: *std.Io.Writer, s: []const u8) !void {

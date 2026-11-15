@@ -10,6 +10,7 @@
 //! now; the desktop window uses this one, so a turn is a function call rather
 //! than a subprocess.
 const std = @import("std");
+const builtin = @import("builtin");
 const compat = @import("compat");
 const Config = @import("config.zig").Config;
 const providers = @import("providers/root.zig");
@@ -26,6 +27,8 @@ const subagent_runner = @import("subagent_runner.zig");
 const security = @import("security/policy.zig");
 const onboard = @import("onboard.zig");
 const Agent = @import("agent/root.zig").Agent;
+const daemon = @import("daemon.zig");
+const thread_stacks = @import("thread_stacks.zig");
 
 pub const Error = error{
     /// The config names no model, so there is nothing to ask.
@@ -59,6 +62,15 @@ pub const Runtime = struct {
     /// Where turns are remembered. Owned by `mem_rt` when there is one.
     session_store: ?memory_mod.SessionStore = null,
     response_cache: ?*memory_mod.cache.ResponseCache = null,
+    /// The gateway thread, when the runtime is serving. The runtime links the
+    /// gateway in as a thread (via `daemon.run`) rather than spawning a
+    /// `nullclaw gateway` process, so a window that embeds the runtime has no
+    /// second binary to find. Null while the gateway is not running.
+    gateway_thread: ?std.Thread = null,
+    /// Why the gateway thread ended, when it did. `daemon.run` only returns
+    /// on shutdown, so a joined thread means a stopped gateway; a live thread
+    /// means it is serving.
+    gateway_failure: ?anyerror = null,
 
     /// Hands the process's io to the shared compat layer.
     ///
@@ -228,7 +240,54 @@ pub const Runtime = struct {
         self.agent.memory_session_id = key;
     }
 
+    /// Starts the gateway server on this runtime's own thread. The runtime is
+    /// linked, not spawned, so the window that owns it serves HTTP/WebSocket
+    /// in-process instead of launching a `nullclaw gateway` child. Returns
+    /// without error when the gateway is already running.
+    pub fn serveGateway(self: *Runtime, host: []const u8, port: u16) !void {
+        // Serving spawns a long-lived thread that outlives any single test's
+        // stack frame; the GUI's own tests drive the window, not the network.
+        // Skipping here keeps `zig build test` hermetic (see AGENTS.md §3.6).
+        if (builtin.is_test) return;
+        if (self.gatewayRunning()) return;
+        if (self.gateway_thread != null) {
+            // A previous gateway was stopped but not joined; reap it first.
+            self.gateway_thread.?.join();
+            self.gateway_thread = null;
+            self.gateway_failure = null;
+        }
+        const args = try self.allocator.create(GatewayArgs);
+        errdefer self.allocator.destroy(args);
+        args.* = .{
+            .runtime = self,
+            .host = try self.allocator.dupe(u8, host),
+            .port = port,
+        };
+        self.gateway_thread = std.Thread.spawn(.{ .stack_size = thread_stacks.DAEMON_SERVICE_STACK_SIZE }, gatewayWork, .{args}) catch |err| {
+            self.allocator.destroy(args);
+            return err;
+        };
+    }
+
+    /// Asks the gateway to stop and waits for its thread. `daemon.run` polls
+    /// the shutdown flag and joins its own service threads, so this returns
+    /// once the port is released.
+    pub fn stopGateway(self: *Runtime) void {
+        daemon.requestShutdown();
+        if (self.gateway_thread) |thread| {
+            thread.join();
+            self.gateway_thread = null;
+        }
+    }
+
+    /// True while a gateway thread has been spawned and not yet joined.
+    /// `stopGateway` joins and clears it, so a null thread is not running.
+    pub fn gatewayRunning(self: *const Runtime) bool {
+        return self.gateway_thread != null;
+    }
+
     pub fn deinit(self: *Runtime) void {
+        self.stopGateway();
         self.agent.deinit();
         tools_mod.deinitTools(self.allocator, self.tools);
         if (self.bootstrap_provider) |bp| bp.deinit();
@@ -240,3 +299,23 @@ pub const Runtime = struct {
         self.config.deinit();
     }
 };
+
+/// What the gateway thread needs: the runtime whose config it serves, and
+/// where to bind. Owned by the thread, freed when `daemon.run` returns.
+const GatewayArgs = struct {
+    runtime: *Runtime,
+    host: []u8,
+    port: u16,
+};
+
+/// The gateway thread's body. `daemon.run` owns the accept loop and the
+/// service threads (heartbeat, scheduler, channels) and only returns once
+/// shutdown is requested, so this runs for as long as the gateway serves.
+fn gatewayWork(args: *GatewayArgs) void {
+    const runtime = args.runtime;
+    daemon.run(runtime.allocator, &runtime.config, args.host, args.port) catch |err| {
+        runtime.gateway_failure = err;
+    };
+    runtime.allocator.free(args.host);
+    runtime.allocator.destroy(args);
+}

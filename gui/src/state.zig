@@ -2,6 +2,7 @@
 //! this and nothing else; the runtime's answers arrive on worker threads and
 //! are folded in by `pump` at the top of a frame, so the view never blocks.
 const std = @import("std");
+const builtin = @import("builtin");
 const ui = @import("nanoui").ui;
 const backend = @import("backend.zig");
 const yc = @import("nullclaw");
@@ -164,7 +165,7 @@ const Request = struct {
     state: *AppState,
     kind: Kind,
 
-    const Kind = enum { sessions, transcript, invoke, page, config_load, config_save, config_summary };
+    const Kind = enum { page };
 };
 
 /// The counts the configuration page shows for Capabilities, read from the
@@ -185,10 +186,15 @@ pub const AppState = struct {
     /// The runtime to run: `$NULLCLAW_BIN`, or `nullclaw` off `PATH`.
     exe: []u8,
     executor: runtime.Executor,
-    /// The runtime linked into this binary, built on first use. Null until
-    /// then, and null again if it could not be built — a window with no
-    /// config still opens, and the chat says why it cannot answer.
-    linked: ?yc.runtime_builder.Runtime = null,
+    /// The runtime linked into this binary, built on first use and heap
+    /// allocated. Null until then, and null again if it could not be built —
+    /// a window with no config still opens, and the chat says why it cannot
+    /// answer. It is a pointer, not an inline value, because `AppState.init`
+    /// returns the struct by value: an inline runtime would leave the agent's
+    /// `mem_rt`/`policy` pointers aimed at the discarded `init` frame after
+    /// the copy. A heap runtime keeps one stable address for the life of the
+    /// window.
+    linked: ?*yc.runtime_builder.Runtime = null,
     /// Why `linked` is null, when it is.
     linked_error: ?[]u8 = null,
     /// Turns running against `linked`, one thread each.
@@ -213,8 +219,6 @@ pub const AppState = struct {
     /// The streaming text parsed for the view, kept in step with `stream_text`.
     stream_doc: ?md.Doc = null,
     docs: std.ArrayListUnmanaged(md.Doc) = .empty,
-    sessions_running: bool = false,
-    transcript_running: bool = false,
 
     /// What the user is typing.
     composer: ui.TextBuffer = .{},
@@ -275,12 +279,10 @@ pub const AppState = struct {
     /// those pages have been opened.
     skills_count: ?usize = null,
     caps_summary: ?CapsSummary = null,
-    summary_running: bool = false,
-    /// How many of the summary commands are still in flight.
-    summary_pending: u8 = 0,
 
-    /// Built-in runtime managed by the GUI.
-    daemon: runtime.Daemon,
+    /// The gateway the GUI serves from the linked runtime. It is not a field
+    /// of its own: the gateway runs on the linked runtime's thread (see
+    /// `Runtime.serveGateway`), so its life is the linked runtime's life.
     daemon_auto_started: bool = false,
 
     /// The palette the window is drawn in, and whether the switcher is open.
@@ -314,23 +316,31 @@ pub const AppState = struct {
             .exe = program,
             .executor = runtime.Executor.init(gpa, io, program),
             .turns = runtime.Turns.init(gpa),
-            .daemon = runtime.Daemon.init(gpa, io, program),
         };
         self.loadTheme();
-        // Auto-enable the bundled runtime on startup (best effort).
-        self.ensureDaemonRunning();
+        // Auto-enable the bundled runtime on startup (best effort). Building
+        // the linked runtime also brings the gateway up (see `ensureLinked`),
+        // so the window serves HTTP from the first frame. Tests drive the
+        // window against a stub and build the runtime lazily on the first
+        // turn, so they skip this: building it here would turn every window
+        // test into a runtime test.
+        if (!builtin.is_test) _ = self.ensureLinked();
         self.daemon_auto_started = true;
         return self;
     }
 
     pub fn deinit(self: *AppState) void {
-        // Stop the managed runtime first so it doesn't outlive the GUI.
-        self.daemon.stop();
-        self.daemon.deinit();
+        // The linked runtime owns the gateway thread; stopping it first is
+        // what releases the port before the rest of the state goes away.
+        if (self.linked) |rt| rt.stopGateway();
         // Nothing can call a handler once the executor is down, so whatever is
         // still pending is ours to free.
         self.turns.deinit();
-        if (self.linked) |*rt| rt.deinit();
+        if (self.linked) |rt| {
+            rt.deinit();
+            self.gpa.destroy(rt);
+            self.linked = null;
+        }
         if (self.linked_error) |why| self.gpa.free(why);
         self.executor.deinit();
         for (self.pending.items) |req| self.gpa.destroy(req);
@@ -397,18 +407,24 @@ pub const AppState = struct {
     /// turn leaves `linked_error` set, and the chat reports it instead of
     /// pretending to be ready.
     fn ensureLinked(self: *AppState) ?*yc.runtime_builder.Runtime {
-        if (self.linked) |*rt| return rt;
+        if (self.linked) |rt| return rt;
         if (self.linked_error != null) return null;
-        self.linked = yc.runtime_builder.Runtime.init(self.gpa) catch |err| {
+        const built = self.gpa.create(yc.runtime_builder.Runtime) catch return null;
+        built.* = yc.runtime_builder.Runtime.init(self.gpa) catch |err| {
+            self.gpa.destroy(built);
             self.linked_error = std.fmt.allocPrint(self.gpa, "{s}", .{@errorName(err)}) catch null;
             return null;
         };
-        // Now that the runtime sits in this window's own field, point the
-        // agent and the memory tools at it. Doing this inside `init` would
-        // aim them at a frame that no longer exists, which is what made the
-        // first turn read a freed stack slot as the outbox handle.
-        const rt = &self.linked.?;
+        self.linked = built;
+        // Now that the runtime sits at its heap address, point the agent and
+        // the memory tools at it. Doing this inside `Runtime.init` would aim
+        // them at a frame that no longer exists, which is what made the first
+        // turn read a freed stack slot as the outbox handle.
+        const rt = built;
         rt.wireMemory();
+        // The gateway serves from this runtime too; bring it up now that the
+        // runtime has a stable address.
+        self.ensureDaemonRunning();
         return rt;
     }
 
@@ -438,15 +454,32 @@ pub const AppState = struct {
     }
 
     fn ensureDaemonRunning(self: *AppState) void {
-        if (self.daemon.running()) return;
+        if (self.gatewayRunning()) return;
+        // The gateway is served by the linked runtime, so it can only start
+        // once that runtime exists. This does not build the runtime itself:
+        // `ensureLinked` does that on the first turn (and calls back here), so
+        // a window that has not run a turn yet — every headless test — does
+        // not grow a runtime just from being pumped.
+        const rt = self.linked orelse return;
         const host = self.configFormGatewayHost();
         const port = self.configFormGatewayPort();
-        self.daemon.start(host, port) catch {};
+        rt.serveGateway(host, port) catch {};
     }
 
     pub fn restartDaemon(self: *AppState) void {
-        self.daemon.stop();
+        if (self.linked) |rt| rt.stopGateway();
         self.ensureDaemonRunning();
+    }
+
+    /// Stops the linked runtime's gateway without restarting it.
+    pub fn stopGateway(self: *AppState) void {
+        if (self.linked) |rt| rt.stopGateway();
+    }
+
+    /// True while the linked runtime is serving the gateway.
+    pub fn gatewayRunning(self: *const AppState) bool {
+        const rt = self.linked orelse return false;
+        return rt.gatewayRunning();
     }
 
     fn configFormGatewayHost(self: *AppState) []const u8 {
@@ -472,7 +505,21 @@ pub const AppState = struct {
     }
 
     pub fn daemonStatusText(self: *AppState, a: std.mem.Allocator) []const u8 {
-        return self.daemon.statusLabel(a);
+        if (self.gatewayRunning()) {
+            return std.fmt.allocPrint(a, "running on {s}:{d}", .{
+                self.configFormGatewayHost(),
+                self.configFormGatewayPort(),
+            }) catch "running";
+        }
+        if (self.linked_error) |why| {
+            return std.fmt.allocPrint(a, "runtime unavailable: {s}", .{why}) catch "runtime unavailable";
+        }
+        if (self.linked) |rt| {
+            if (rt.gateway_failure) |err| {
+                return std.fmt.allocPrint(a, "gateway stopped: {s}", .{@errorName(err)}) catch "gateway stopped";
+            }
+        }
+        return "stopped";
     }
 
     fn submit(self: *AppState, argv: []const []const u8, label: []const u8, kind: Request.Kind) void {
@@ -510,13 +557,7 @@ pub const AppState = struct {
         // to run at all. `blame` reports the spawn error in place of anything
         // the command would have said.
         switch (req.kind) {
-            .sessions => self.gotSessions(result),
-            .transcript => self.gotTranscript(result),
-            .invoke => self.gotInvoke(result),
             .page => self.gotPage(result),
-            .config_load => self.gotConfig(result),
-            .config_save => self.gotConfigSaved(result),
-            .config_summary => self.gotConfigSummary(result),
         }
     }
 
@@ -572,45 +613,49 @@ pub const AppState = struct {
     // -------------------------------------------------------------- sessions
 
     pub fn refreshSessions(self: *AppState) void {
-        if (self.sessions_running) return;
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-        defer argv.deinit(self.gpa);
-        backend.argvSessionList(self.gpa, &argv) catch return;
-        self.sessions_running = true;
-        self.submit(argv.items, "sessions", .sessions);
-    }
-
-    fn gotSessions(self: *AppState, result: runtime.Result) void {
-        self.sessions_running = false;
-        if (!result.ok) {
-            self.blame(result);
-            return;
-        }
-        const parsed = backend.parseSessions(self.gpa, result.stdout) catch {
-            self.say("the runtime's session list could not be read");
+        // The session list is a query on the linked runtime's own session
+        // store, not on a CLI process. A runtime with no session store (a
+        // markdown memory) has no sidebar to draw either.
+        const rt = self.ensureLinked() orelse {
+            self.clearSessions();
             return;
         };
+        const store = rt.session_store orelse {
+            self.clearSessions();
+            return;
+        };
+        const infos = store.listSessions(self.gpa, 200, 0) catch return;
+        defer yc.memory.freeSessionInfos(self.gpa, infos);
+
         const keep = if (self.selected) |i| self.sessions.items[i].key else null;
         var keep_owned: ?[]u8 = null;
-        if (keep) |k| keep_owned = self.gpa.dupe(u8, k) catch null;
-        defer if (keep_owned) |k| self.gpa.free(k);
+        if (keep) |key| keep_owned = self.gpa.dupe(u8, key) catch null;
+        defer if (keep_owned) |key| self.gpa.free(key);
 
-        // The old list is freed before the new one takes its place: the array
-        // comes from `toOwnedSlice`, so it owns itself and its rows own their
-        // strings.
         self.clearSessions();
         self.sessions.deinit(self.gpa);
-        self.sessions = backend.sessionsToList(parsed);
+        self.sessions = .empty;
+        for (infos) |info| {
+            const converted = backend.Session{
+                .key = self.gpa.dupe(u8, info.session_id) catch continue,
+                .message_count = info.message_count,
+                .created_at = self.gpa.dupe(u8, info.first_message_at) catch "",
+                .last_active = self.gpa.dupe(u8, info.last_message_at) catch "",
+            };
+            self.sessions.append(self.gpa, converted) catch {
+                var mutable = converted;
+                mutable.deinit(self.gpa);
+            };
+        }
         self.selected = null;
-        if (keep_owned) |k| {
-            for (self.sessions.items, 0..) |*s, i| {
-                if (std.mem.eql(u8, s.key, k)) {
+        if (keep_owned) |key| {
+            for (self.sessions.items, 0..) |*session, i| {
+                if (std.mem.eql(u8, session.key, key)) {
                     self.selected = i;
                     break;
                 }
             }
         }
-        if (self.selected == null and self.sessions.items.len > 0) self.select(0);
     }
 
     fn clearSessions(self: *AppState) void {
@@ -625,29 +670,35 @@ pub const AppState = struct {
     }
 
     fn loadTranscript(self: *AppState, key: []const u8) void {
-        if (self.transcript_running) return;
-        var argv: std.ArrayListUnmanaged([]const u8) = .empty;
-        defer argv.deinit(self.gpa);
-        backend.argvHistoryShow(self.gpa, &argv, key, 200, "200") catch return;
-        self.transcript_running = true;
-        self.submit(argv.items, "history show", .transcript);
-    }
-
-    fn gotTranscript(self: *AppState, result: runtime.Result) void {
-        self.transcript_running = false;
-        if (!result.ok) {
-            self.blame(result);
-            return;
-        }
-        const parsed = backend.parseMessages(self.gpa, result.stdout) catch {
-            self.say("the transcript could not be read");
+        // The transcript is read from the linked runtime's session store. No
+        // store means no history to draw, which is what a markdown-only
+        // runtime has always answered.
+        const rt = self.ensureLinked() orelse {
+            self.clearMessages();
             return;
         };
+        const store = rt.session_store orelse {
+            self.clearMessages();
+            return;
+        };
+        const entries = store.loadMessagesDetailed(self.gpa, key, 200, 0) catch return;
+        defer yc.memory.freeDetailedMessages(self.gpa, entries);
+
         self.clearMessages();
         self.messages.deinit(self.gpa);
-        self.messages = backend.messagesToList(parsed);
-        for (self.messages.items) |m| {
-            var doc = md.parse(self.gpa, m.content) catch md.Doc{ .arena = std.heap.ArenaAllocator.init(self.gpa) };
+        self.messages = .empty;
+        for (entries) |entry| {
+            const converted = backend.Message{
+                .role = self.gpa.dupe(u8, entry.role) catch continue,
+                .content = self.gpa.dupe(u8, entry.content) catch continue,
+                .created_at = self.gpa.dupe(u8, entry.created_at) catch "",
+            };
+            self.messages.append(self.gpa, converted) catch {
+                var mutable = converted;
+                mutable.deinit(self.gpa);
+                continue;
+            };
+            var doc = md.parse(self.gpa, converted.content) catch md.Doc{ .arena = std.heap.ArenaAllocator.init(self.gpa) };
             self.docs.append(self.gpa, doc) catch {
                 doc.deinit();
             };
@@ -774,28 +825,6 @@ pub const AppState = struct {
         if (self.draft_session.items.len > 0) return self.draft_session.items;
         return null;
     }
-
-    fn gotInvoke(self: *AppState, result: runtime.Result) void {
-        self.sending = false;
-        if (!result.ok) {
-            const text = self.reason(result) orelse return;
-            defer self.gpa.free(text);
-            self.pushMessage("error", text);
-            self.say(text);
-            return;
-        }
-        const reply = backend.parseInvoke(self.gpa, result.stdout) catch {
-            self.say("the runtime's reply could not be read");
-            return;
-        };
-        defer reply.deinit(self.gpa);
-        self.pushMessage("assistant", reply.response);
-        // A turn can create the session it ran in: pick it up in the sidebar.
-        self.refreshSessions();
-    }
-
-    // ----------------------------------------------------------- json pages
-
     pub fn openPage(self: *AppState, page: Page) void {
         self.page = page;
         // A toast belongs to the page that produced it: a configuration
@@ -811,6 +840,18 @@ pub const AppState = struct {
 
     pub fn runPage(self: *AppState) void {
         if (self.json_running) return;
+
+        // The prose pages whose answers the runtime already builds as
+        // functions. They are quick file queries, safe to answer on this
+        // frame; the slow ones (network, hardware) still go through the CLI.
+        if (self.page == .auth) {
+            const text = yc.page_json.authStatusText(self.gpa) catch null;
+            if (text) |answer| {
+                defer self.gpa.free(answer);
+                self.setJsonProse(answer);
+                return;
+            }
+        }
 
         // A page whose answer the runtime can produce as a function is asked
         // directly: no program to find, no stdout to parse. The rest still go
@@ -829,9 +870,6 @@ pub const AppState = struct {
         self.submit(argv.items, self.page.label(), .page);
     }
 
-    /// Builds a page's answer from the linked runtime, for the pages whose
-    /// JSON the runtime already exposes as a function. Null when this page
-    /// has no such function, and the caller falls back to the CLI.
     fn answerInProcess(self: *AppState) ?[]u8 {
         // The pages that read the config load it here rather than borrowing
         // the runtime's: opening a page must not build a runtime, and a
@@ -896,6 +934,22 @@ pub const AppState = struct {
             .arena = std.heap.ArenaAllocator.init(self.gpa),
         };
         lines.problem = "the runtime's command failed";
+        self.json_lines = lines;
+    }
+
+    /// Shows a page's prose answer where the tree would go, without the red
+    /// styling a failure gets: `auth status` and its neighbours answer in
+    /// sentences, not JSON.
+    pub fn setJsonProse(self: *AppState, text: []const u8) void {
+        self.clearJson();
+        self.clearExpanded();
+        self.json_text = self.gpa.dupe(u8, text) catch &.{};
+        var lines = backend.JsonLines{
+            .gpa = self.gpa,
+            .expanded = &self.json_expanded,
+            .arena = std.heap.ArenaAllocator.init(self.gpa),
+        };
+        lines.problem = "prose";
         self.json_lines = lines;
     }
 
@@ -1033,11 +1087,9 @@ pub const AppState = struct {
     pub fn loadConfig(self: *AppState) void {
         if (self.config_running) return;
         self.config_running = true;
-        self.submit(&.{ "config", "validate" }, "config", .config_load);
-    }
-
-    fn gotConfig(self: *AppState, result: runtime.Result) void {
-        self.config_running = false;
+        // The document is read from disk here; whether the runtime accepts it
+        // is checked against the loaded config directly, not by spawning
+        // `config validate`.
         if (self.config) |*c| {
             c.deinit();
             self.config = null;
@@ -1052,11 +1104,22 @@ pub const AppState = struct {
         };
         self.config_dirty = false;
         self.syncFormFromConfig();
-        // The page edits the file itself, so the tree is drawn from the
-        // document just read rather than from `config validate`'s output:
-        // that view is merged, and saving it would drop the defaults it added.
         self.showConfigDoc();
-        if (!result.ok) self.blame(result);
+        // Validation is a pure check on the loaded config; a rejection is
+        // shown as the page's complaint rather than a spawned command's
+        // stderr.
+        var cfg = yc.config.Config.load(self.gpa) catch {
+            self.config_running = false;
+            self.loadConfigSummary();
+            return;
+        };
+        defer cfg.deinit();
+        cfg.validate() catch {
+            self.config_running = false;
+            self.loadConfigSummary();
+            return;
+        };
+        self.config_running = false;
         self.loadConfigSummary();
     }
 
@@ -1064,30 +1127,33 @@ pub const AppState = struct {
     /// installed skills and the build's capabilities. Both are runtime state
     /// rather than config keys, so the page asks rather than reading the file.
     fn loadConfigSummary(self: *AppState) void {
-        if (self.summary_running) return;
-        self.summary_running = true;
-        self.summary_pending = 2;
-        self.submit(&.{ "capabilities", "--json" }, "capabilities", .config_summary);
-        self.submit(&.{ "skills", "list", "--json" }, "skills", .config_summary);
+        // Both are runtime state the runtime already exposes as functions, so
+        // the page asks them in-process rather than spawning two commands.
+        var cfg = yc.config.Config.load(self.gpa) catch return;
+        defer cfg.deinit();
+        if (yc.capabilities.buildManifestJson(self.gpa, &cfg, null) catch null) |caps_json| {
+            defer self.gpa.free(caps_json);
+            self.applyConfigSummary(caps_json);
+        }
+        if (yc.page_json.skillsList(self.gpa, &cfg) catch null) |skills_json| {
+            defer self.gpa.free(skills_json);
+            self.applyConfigSummary(skills_json);
+        }
     }
 
-    fn gotConfigSummary(self: *AppState, result: runtime.Result) void {
-        // Two commands answer into this one kind; the flag clears when both
-        // are in, so a third open does not queue behind a half-finished pair.
-        if (self.summary_pending > 0) self.summary_pending -= 1;
-        if (self.summary_pending == 0) self.summary_running = false;
-        if (!result.ok) return;
-
+    /// Folds one capabilities-or-skills document into the counts the config
+    /// page shows. Shared by the in-process path and the spawned fallback.
+    fn applyConfigSummary(self: *AppState, text: []const u8) void {
         // Which command this is, by what it returned: capabilities has
         // `channels`, skills is a bare list.
-        var rows = if (std.mem.indexOf(u8, result.stdout, "\"channels\"") != null)
-            backend.readCapabilities(self.gpa, result.stdout)
+        var rows = if (std.mem.indexOf(u8, text, "\"channels\"") != null)
+            backend.readCapabilities(self.gpa, text)
         else
-            backend.readRecordList(self.gpa, result.stdout, "Skills");
+            backend.readRecordList(self.gpa, text, "Skills");
         defer rows.deinit();
         if (rows.problem != null) return;
 
-        if (std.mem.indexOf(u8, result.stdout, "\"channels\"") != null) {
+        if (std.mem.indexOf(u8, text, "\"channels\"") != null) {
             self.caps_summary = summariseCaps(&rows);
         } else {
             self.skills_count = rows.totalRows();
@@ -1342,9 +1408,21 @@ pub const AppState = struct {
         };
         self.config_dirty = false;
         self.say("configuration saved");
-        // The runtime validates the file it will actually read.
-        self.config_running = true;
-        self.submit(&.{ "config", "validate" }, "config validate", .config_save);
+        // The file is validated in-process: the same Config the runtime
+        // builds from disk is checked here, so a save is confirmed against
+        // what the gateway will read when it restarts, without spawning a
+        // `config validate` process that a linked window does not ship.
+        var cfg = yc.config.Config.load(self.gpa) catch {
+            self.restartDaemon();
+            return;
+        };
+        defer cfg.deinit();
+        cfg.validate() catch |err| {
+            self.sayf("saved, but the runtime objects: {s}", .{@errorName(err)});
+            self.restartDaemon();
+            return;
+        };
+        self.say("configuration saved and valid");
         // Restart managed runtime to pick up saved config/gateway settings.
         self.restartDaemon();
     }
@@ -1489,17 +1567,6 @@ pub const AppState = struct {
         return parsed != before;
     }
 
-    fn gotConfigSaved(self: *AppState, result: runtime.Result) void {
-        self.config_running = false;
-        if (result.ok) {
-            self.say("configuration saved and valid");
-        } else {
-            const why = backend.diagnose(self.gpa, result.stdout, result.stderr);
-            defer if (why) |text| self.gpa.free(text);
-            self.sayf("saved, but the runtime objects: {s}", .{why orelse "no reason given"});
-        }
-    }
-
     /// Sets one dotted path in the loaded document from the quick-edit row.
     pub fn applyEdit(self: *AppState) void {
         const doc = if (self.config) |*c| c else return;
@@ -1609,10 +1676,8 @@ test "a pushed message keeps a doc beside it" {
         .exe = &.{},
         .executor = runtime.Executor.init(testing.allocator, undefined, ""),
         .turns = runtime.Turns.init(testing.allocator),
-        .daemon = runtime.Daemon.init(testing.allocator, undefined, ""),
     };
     defer {
-        s.daemon.deinit();
         s.clearMessages();
         s.messages.deinit(testing.allocator);
         s.docs.deinit(testing.allocator);
@@ -1637,10 +1702,8 @@ test "opening and closing json paths does not leak the paths" {
         .exe = &.{},
         .executor = runtime.Executor.init(testing.allocator, undefined, ""),
         .turns = runtime.Turns.init(testing.allocator),
-        .daemon = runtime.Daemon.init(testing.allocator, undefined, ""),
     };
     defer {
-        s.daemon.deinit();
         s.clearJson();
         s.clearExpanded();
         s.json_expanded.deinit(testing.allocator);
