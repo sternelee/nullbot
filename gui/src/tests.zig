@@ -27,7 +27,7 @@ test "the window draws its shell, sidebar and composer" {
     try testing.expect(w.tester.hasText("nullclaw"));
     try testing.expect(w.tester.hasText("Sessions"));
     try testing.expect(w.tester.hasText("No sessions yet"));
-    try testing.expect(w.tester.hasText("Ask nullclaw anything"));
+    try testing.expect(w.tester.hasText("What can I help with?"));
 }
 
 test "every page names itself in the sidebar and the header" {
@@ -168,18 +168,21 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
     try testing.expect(brand.x < view.sidebar_width);
     try testing.expect(heading.x < view.sidebar_width / 2);
 
-    // The transcript is the other column: both bubbles are right of the
-    // sidebar, and neither is in the sidebar's half of the window.
+    // The transcript is the other column: both messages sit right of the
+    // sidebar, past the avatar gutter.
     try testing.expect(question.x > view.sidebar_width);
     try testing.expect(answer.x > view.sidebar_width);
-    try testing.expect(question.x > view.sidebar_width + 120);
+    try testing.expect(question.x > view.sidebar_width + 60);
 
-    // A short exchange is short bubbles: the question hugs the right edge of
-    // the transcript, the answer its left edge, and neither spans the width.
-    try testing.expect(question.x > answer.x);
-    try testing.expect(question.x + question.w > 1100);
-    try testing.expect(answer.x < view.sidebar_width + 100);
-    try testing.expect(answer.w < 400);
+    // The ChatGPT-style layout: every message is a full-width row with the
+    // text at the same left edge, after its role avatar. Nothing is
+    // right-aligned, so the two bodies line up rather than facing off.
+    // The user's body carries a small padding block, so its text starts a
+    // little further in than the assistant's; both are in the same gutter.
+    try testing.expect(@abs(question.x - answer.x) < 20);
+
+    // The exchange reads top to bottom: the question above the answer.
+    try testing.expect(question.y < answer.y);
 
     // The composer sits under the transcript, at the foot of the window.
     try testing.expect(hint.y > answer.y);
@@ -419,7 +422,7 @@ test "the diagnostics panel names what the window is connected to" {
     try testing.expect(w.tester.containsText("Config"));
     try testing.expect(w.tester.containsText("Workspace"));
     // The theme it is drawn in, so a screenshot can be traced to a palette.
-    try testing.expect(w.tester.containsText("Matrix"));
+    try testing.expect(w.tester.containsText("Neutral"));
 }
 
 // The pages are answered by the linked runtime, not by a program. The stub

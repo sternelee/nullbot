@@ -17,11 +17,11 @@ const AppState = state.AppState;
 const Page = state.Page;
 
 /// Wide enough for a session key and its stamp.
-pub const sidebar_width: f32 = 268;
+pub const sidebar_width: f32 = 272;
 /// A comfortable measure for prose, as the runtime's own output is long.
-const content_max: f32 = 860;
-/// A bubble never takes the whole width; the eye needs the ragged edge.
-const bubble_share: f32 = 0.84;
+const content_max: f32 = 768;
+/// The circular role marker at the head of each message row.
+const avatar_size: f32 = 30;
 /// The label column in the configuration form: wide enough that a hint about
 /// a dotted path stays on two lines instead of three.
 const label_w: f32 = 260;
@@ -57,10 +57,210 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
     const bar = ui.div(c).column().w(sidebar_width).hFull().bg(s.palette.shell);
     defer bar.end();
     brand(s, c);
+    sessionSearch(s, c);
     sessionsHeading(s, c);
     sessionList(s, c);
     nav(s, c);
     themeSwitcher(s, c);
+}
+
+/// The window's identity and the one action that starts a fresh conversation.
+/// The new-chat button is primary here: in a chat app it is the most common
+/// thing to do after opening the window.
+fn brand(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().px(14).pt(16).pb(12).gap(10).itemsCenter();
+    defer row.end();
+
+    // A plain icon followed by text, the same shape the nav rows use. A div
+    // wrapper around the icon shifted the following text back to the row's
+    // origin, so the name was drawn under the mark.
+    ui.icon(c, "cube", .{ .size = 18, .color = s.palette.accent });
+    ui.text(c, "nullclaw", .{ .size = 14.5, .weight = .semibold, .color = s.palette.text });
+    ui.spacer(c);
+
+    if (ui.button(c, "", .{
+        .variant = .ghost,
+        .icon = "square.and.pencil",
+        .size = 15,
+    }).clicked) {
+        s.newChat();
+    }
+}
+
+/// A filter over the session keys. It never changes which session is selected;
+/// it only decides which rows the list draws this frame.
+fn sessionSearch(s: *AppState, c: *ui.Context) void {
+    const wrap = ui.div(c).column().wFull().px(12).pb(8);
+    defer wrap.end();
+    const field = ui.div(c).row().wFull().gap(7).itemsCenter()
+        .px(9).h(32).rounded(8).bg(s.palette.raised);
+    defer field.end();
+    ui.icon(c, "magnifyingglass", .{ .size = 13, .color = s.palette.faint });
+    _ = ui.textField(c, &s.session_search, .{
+        .placeholder = "Search chats",
+        .width = .{ .px = sidebar_width - 24 - 9 - 13 - 7 },
+        .bare = true,
+        .size = 12,
+        .color = s.palette.text,
+        .caret_color = s.palette.accent,
+    });
+}
+
+fn sessionsHeading(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().px(16).pt(4).pb(6).gap(8).itemsCenter();
+    defer row.end();
+    ui.text(c, "Sessions", .{
+        .size = 10.5,
+        .weight = .semibold,
+        .color = s.palette.muted,
+        .tracking = 0.8,
+    });
+    ui.spacer(c);
+    ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d}", .{s.sessions.items.len});
+}
+
+/// True when `key` contains the search text, ignoring case. An empty query
+/// matches everything.
+fn matchesSearch(s: *AppState, key: []const u8) bool {
+    const q = s.session_search.text();
+    if (q.len == 0) return true;
+    if (q.len > key.len) return false;
+    var i: usize = 0;
+    while (i + q.len <= key.len) : (i += 1) {
+        var same = true;
+        for (q, 0..) |ch, j| {
+            if (std.ascii.toLower(ch) != std.ascii.toLower(key[i + j])) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
+}
+
+fn sessionList(s: *AppState, c: *ui.Context) void {
+    const list = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
+    defer list.end();
+
+    if (s.sessions.items.len == 0) {
+        const empty = ui.div(c).column().wFull().p(10).gap(4);
+        defer empty.end();
+        ui.text(c, "No sessions yet", .{ .size = 12, .color = s.palette.faint });
+        ui.text(c, "Send a message to start one.", .{ .size = 11, .color = s.palette.faint });
+        return;
+    }
+
+    var shown: usize = 0;
+    for (s.sessions.items, 0..) |session, i| {
+        if (!matchesSearch(s, session.key)) continue;
+        sessionRow(s, c, session, i);
+        shown += 1;
+    }
+    if (shown == 0) {
+        const empty = ui.div(c).column().wFull().p(10).gap(4);
+        defer empty.end();
+        ui.text(c, "No matching chats", .{ .size = 12, .color = s.palette.faint });
+    }
+}
+
+fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usize) void {
+    const selected = s.selected != null and s.selected.? == index;
+    const it = ui.pressable(c, .{
+        .direction = .row,
+        .width = .fill,
+        .gap = 9,
+        .align_items = .center,
+        .padding = .xy(10, 8),
+        .radius = 8,
+        .background = if (selected) s.palette.raised else s.palette.shell,
+    }, s.palette.hover);
+    defer ui.end(c);
+
+    const dot = ui.div(c).w(7).h(7).roundedFull()
+        .bg(if (selected) s.palette.accent else s.palette.border);
+    defer dot.end();
+
+    // Two lines so the key gets the whole row's width: with the stamp on the
+    // same line the middle-truncation cut short keys like "telegram:42".
+    const text_col = ui.div(c).column().grow().minW(0).gap(3);
+    defer text_col.end();
+    clipped(c, session.key, .{
+        .size = 12,
+        .color = if (selected) s.palette.text else s.palette.muted,
+        .truncate = .middle,
+    });
+
+    const meta = ui.div(c).row().wFull().gap(6).itemsCenter();
+    defer meta.end();
+    ui.textf(c, .{ .size = 10, .color = s.palette.faint, .tabular = true }, "{d} turns", .{session.turns()});
+    ui.spacer(c);
+    ui.text(c, backend.formatStamp(c.alloc(), session.last_active), .{
+        .size = 9.5,
+        .color = s.palette.faint,
+        .tabular = true,
+    });
+
+    if (it.clicked and !selected) s.select(index);
+}
+
+fn nav(s: *AppState, c: *ui.Context) void {
+    _ = c.leaf(.{
+        .width = .fill,
+        .height = .{ .px = 1 },
+        .background = s.palette.border,
+    }, .none, null);
+
+    // Grouped the way a settings app groups its panes: the pages you work in
+    // every day sit above the runtime and system pages. Each group is only a
+    // label plus its rows, so the whole list still fits without a nested menu.
+    const box = ui.div(c).column().wFull().gap(2).px(8).pt(8).pb(4);
+    defer box.end();
+    for (state.nav_groups) |group| {
+        navGroupHead(c, group.title);
+        for (group.pages) |page| navRow(s, c, page);
+    }
+}
+
+/// A group label. Its own function so the `end` runs on each iteration: a
+/// `defer` placed in the loop body would pile every group's div open and the
+/// rows would all land inside the last one, side by side.
+fn navGroupHead(c: *ui.Context, title: []const u8) void {
+    const head = ui.div(c).row().wFull().px(10).pt(6).pb(2);
+    defer head.end();
+    ui.text(c, title, .{
+        .size = 9.5,
+        .weight = .semibold,
+        .color = c.theme.muted,
+        .tracking = 0.9,
+    });
+}
+
+fn navRow(s: *AppState, c: *ui.Context, page: Page) void {
+    const active = s.page == page and s.page != .chat;
+    const it = ui.pressable(c, .{
+        .direction = .row,
+        .width = .fill,
+        .gap = 10,
+        .align_items = .center,
+        .padding = .xy(10, 6),
+        .radius = 7,
+        .background = if (active) s.palette.raised else s.palette.shell,
+    }, s.palette.hover);
+    defer ui.end(c);
+
+    ui.icon(c, page.icon(), .{
+        .size = 14,
+        .frame = 17,
+        .color = if (active) s.palette.accent else s.palette.muted,
+    });
+    ui.text(c, page.label(), .{
+        .size = 12.5,
+        .weight = if (active) .medium else .regular,
+        .color = if (active) s.palette.text else s.palette.muted,
+    });
+
+    if (it.clicked) s.openPage(page);
 }
 
 /// The palette picker, at the foot of the sidebar. The web client puts it in
@@ -73,27 +273,22 @@ fn themeSwitcher(s: *AppState, c: *ui.Context) void {
         .background = s.palette.border,
     }, .none, null);
 
-    const wrap = ui.div(c).column().wFull().p(8).gap(4);
+    const wrap = ui.div(c).row().wFull().p(10).gap(6).itemsCenter();
     defer wrap.end();
-
-    {
-        const row = ui.div(c).row().wFull().gap(6).itemsCenter();
-        defer row.end();
-        var picked: ?usize = @as(?usize, s.palette_index);
-        const names = comptime blk: {
-            var out: [theme.choices.len][]const u8 = undefined;
-            for (theme.choices, 0..) |choice, i| out[i] = choice.name;
-            break :blk out;
-        };
-        if (kit.select(c, "palette", &names, &picked, .{
-            .placeholder = "Theme…",
-            .width = sidebar_width - 16 - 34,
-        })) {
-            if (picked) |i| s.setPalette(i);
-        }
-        if (kit.iconButton(c, "info.circle", .{ .size = .sm }).clicked) {
-            s.diagnostics_open = true;
-        }
+    var picked: ?usize = @as(?usize, s.palette_index);
+    const names = comptime blk: {
+        var out: [theme.choices.len][]const u8 = undefined;
+        for (theme.choices, 0..) |choice, i| out[i] = choice.name;
+        break :blk out;
+    };
+    if (kit.select(c, "palette", &names, &picked, .{
+        .placeholder = "Theme…",
+        .width = sidebar_width - 20 - 34,
+    })) {
+        if (picked) |i| s.setPalette(i);
+    }
+    if (kit.iconButton(c, "info.circle", .{ .size = .sm }).clicked) {
+        s.diagnostics_open = true;
     }
 }
 
@@ -160,133 +355,6 @@ fn diagLine(s: *AppState, c: *ui.Context, label: []const u8, value: []const u8, 
     }
 }
 
-fn brand(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(14).pt(14).pb(6).gap(9).itemsCenter();
-    defer row.end();
-
-    ui.icon(c, "cube", .{ .size = 17, .color = s.palette.accent });
-    ui.text(c, "nullclaw", .{ .size = 14.5, .weight = .semibold, .color = s.palette.text });
-    ui.spacer(c);
-
-    if (ui.button(c, "", .{ .variant = .ghost, .icon = "square.and.pencil", .size = 13 }).clicked) {
-        s.newChat();
-    }
-    if (ui.button(c, "", .{ .variant = .ghost, .icon = "arrow.clockwise", .size = 13 }).clicked) {
-        s.refreshSessions();
-    }
-}
-
-fn sessionsHeading(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(16).pt(10).pb(6).gap(8).itemsCenter();
-    defer row.end();
-    ui.text(c, "Sessions", .{
-        .size = 10.5,
-        .weight = .semibold,
-        .color = s.palette.muted,
-        .tracking = 0.7,
-    });
-    ui.spacer(c);
-    ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d}", .{s.sessions.items.len});
-}
-
-fn sessionList(s: *AppState, c: *ui.Context) void {
-    const list = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
-    defer list.end();
-
-    if (s.sessions.items.len == 0) {
-        const empty = ui.div(c).column().wFull().p(10).gap(4);
-        defer empty.end();
-        ui.text(c, "No sessions yet", .{ .size = 12, .color = s.palette.faint });
-        ui.text(c, "Send a message to start one.", .{ .size = 11, .color = s.palette.faint });
-        return;
-    }
-
-    for (s.sessions.items, 0..) |session, i| {
-        sessionRow(s, c, session, i);
-    }
-}
-
-fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usize) void {
-    const selected = s.selected != null and s.selected.? == index;
-    const it = ui.pressable(c, .{
-        .direction = .column,
-        .width = .fill,
-        .gap = 3,
-        .padding = .xy(10, 8),
-        .radius = 8,
-        .background = if (selected) s.palette.accent.alpha(0.17) else s.palette.shell,
-        .border = if (selected) s.palette.accent.alpha(0.45) else null,
-        .border_width = if (selected) 1 else 0,
-    }, s.palette.hover);
-    defer ui.end(c);
-
-    clipped(c, session.key, .{
-        .size = 12,
-        .mono = true,
-        .color = if (selected) s.palette.text else s.palette.muted,
-        .truncate = .middle,
-    });
-
-    const meta = ui.div(c).row().wFull().gap(6).itemsCenter();
-    defer meta.end();
-    ui.textf(c, .{ .size = 10, .color = s.palette.faint, .tabular = true }, "{d} turns", .{session.turns()});
-    ui.spacer(c);
-    // Through `c.print`: the frame's memory outlives this call, and a local
-    // buffer would be gone before the frame is drawn.
-    ui.text(c, backend.formatStamp(c.alloc(), session.last_active), .{
-        .size = 10,
-        .color = s.palette.faint,
-        .tabular = true,
-    });
-
-    if (it.clicked and !selected) s.select(index);
-}
-
-fn nav(s: *AppState, c: *ui.Context) void {
-    _ = c.leaf(.{
-        .width = .fill,
-        .height = .{ .px = 1 },
-        .background = s.palette.border,
-    }, .none, null);
-
-    // Sized to its rows rather than to a fixed height: sixteen pages do not
-    // fit in the 318 points this used to reserve, and the list was cut off
-    // mid-row at the bottom of the sidebar. The session list above it grows
-    // into whatever room is left.
-    const box = ui.div(c).column().wFull().gap(1).p(8);
-    defer box.end();
-    for (state.nav) |page| {
-        navRow(s, c, page);
-    }
-}
-
-fn navRow(s: *AppState, c: *ui.Context, page: Page) void {
-    const active = s.page == page;
-    const it = ui.pressable(c, .{
-        .direction = .row,
-        .width = .fill,
-        .gap = 10,
-        .align_items = .center,
-        .padding = .xy(10, 7),
-        .radius = 7,
-        .background = if (active) s.palette.accent.alpha(0.18) else s.palette.shell,
-    }, s.palette.hover);
-    defer ui.end(c);
-
-    ui.icon(c, page.icon(), .{
-        .size = 13,
-        .frame = 16,
-        .color = if (active) s.palette.accent else s.palette.muted,
-    });
-    ui.text(c, page.label(), .{
-        .size = 12.5,
-        .weight = if (active) .medium else .regular,
-        .color = if (active) s.palette.text else s.palette.muted,
-    });
-
-    if (it.clicked) s.openPage(page);
-}
-
 // --- the body ------------------------------------------------------------
 
 fn body(s: *AppState, c: *ui.Context) void {
@@ -308,29 +376,23 @@ fn body(s: *AppState, c: *ui.Context) void {
 }
 
 fn header(s: *AppState, c: *ui.Context) void {
-    const bar = ui.div(c).row().wFull().px(22).pt(16).pb(10).gap(12).itemsCenter();
+    const bar = ui.div(c).row().wFull().px(26).pt(18).pb(12).gap(12).itemsCenter();
     defer bar.end();
 
-    // The title block is closed before the trailing controls are drawn: a
-    // deferred `end` would keep the column open and stack them under the
-    // subtitle instead of putting them on the right.
     {
-        const titles = ui.div(c).column().grow().minW(0).gap(3);
+        const titles = ui.div(c).column().grow().minW(0).gap(2);
         defer titles.end();
-        ui.text(c, s.page.label(), .{ .size = 15.5, .weight = .semibold, .color = s.palette.text });
+        ui.text(c, s.page.label(), .{ .size = 16, .weight = .semibold, .color = s.palette.text });
         clipped(c, subtitle(s, c), .{ .size = 11.5, .color = s.palette.faint, .truncate = .middle });
     }
 
     if (s.busy()) {
         ui.text(c, "working…", .{ .size = 11, .color = s.palette.accent });
     }
-    // The configuration page has its own Reload and Save, and `config show`
-    // is not what its form edits, so a Run button here would only replace
-    // the page with an unrelated JSON dump.
     if (s.page == .config) {
         configStatusChip(s, c);
     } else if (s.page == .chat) {
-        if (ui.button(c, "Refresh", .{ .size = 12, .icon = "arrow.clockwise" }).clicked) {
+        if (ui.button(c, "", .{ .variant = .ghost, .size = 13, .icon = "arrow.clockwise" }).clicked) {
             s.refreshSessions();
         }
     } else {
@@ -363,7 +425,7 @@ fn subtitle(s: *AppState, c: *ui.Context) []const u8 {
 fn chat(s: *AppState, c: *ui.Context) void {
     const column = ui.div(c).column().grow().minW(0).wFull();
     defer column.end();
-    if (s.messages.items.len == 0) {
+    if (s.messages.items.len == 0 and !s.streaming()) {
         emptyChat(s, c);
     } else {
         transcript(s, c);
@@ -371,123 +433,172 @@ fn chat(s: *AppState, c: *ui.Context) void {
     composer(s, c);
 }
 
+/// The first thing you see: a calm invitation and a few things to try. The
+/// suggestions are cards rather than pills so they read as actions, not tags.
 fn emptyChat(s: *AppState, c: *ui.Context) void {
-    const box = ui.div(c).column().grow().wFull().center().gap(10).px(22);
+    const box = ui.div(c).column().grow().wFull().center().gap(0).px(22);
     defer box.end();
 
-    ui.icon(c, "sparkles", .{ .size = 26, .color = s.palette.accent });
-    ui.text(c, "Ask nullclaw anything", .{ .size = 17, .weight = .semibold, .color = s.palette.text });
-    ui.text(c, "Turns run through the same agent loop as the command line.", .{
-        .size = 12.5,
+    const inner = ui.div(c).column().wFull().maxW(content_max).center().gap(16);
+    defer inner.end();
+
+    const mark = ui.div(c).w(52).h(52).rounded(16).bg(s.palette.accent).center();
+    defer mark.end();
+    ui.icon(c, "sparkles", .{ .size = 27, .color = s.palette.accent_text });
+
+    const intro = ui.div(c).column().wFull().center().gap(6);
+    defer intro.end();
+    ui.text(c, "What can I help with?", .{
+        .size = 25,
+        .weight = .semibold,
+        .color = s.palette.text,
+    });
+    ui.text(c, "Ask nullclaw anything. Turns run through the same agent as the command line.", .{
+        .size = 13,
         .color = s.palette.faint,
     });
 
-    const chips = ui.div(c).row().gap(8).pt(6);
-    defer chips.end();
-    for (suggestions) |prompt| {
-        if (ui.button(c, prompt, .{ .size = 12 }).clicked) {
-            s.composer.set(prompt);
-            s.send();
-        }
+    // A plain row inside the centred column: no `wFull`/`justifyCenter`, which
+    // pushed the cards off to one side instead of centring them.
+    const grid = ui.div(c).row().gap(10).pt(14);
+    defer grid.end();
+    for (suggestions) |prompt| suggestionCard(s, c, prompt);
+}
+
+/// One suggestion. Its own function so the pressable's `end` runs per card:
+/// deferring inside the loop would nest all the cards into one another.
+/// A fixed width, because `.fill` collapses to nothing in a centred row.
+fn suggestionCard(s: *AppState, c: *ui.Context, prompt: []const u8) void {
+    const card = ui.pressable(c, .{
+        .direction = .column,
+        .width = .{ .px = (content_max - 20) / 3 },
+        .gap = 8,
+        .padding = .xy(14, 16),
+        .radius = 12,
+        .background = s.palette.panel,
+        .border = s.palette.border,
+        .border_width = 1,
+    }, s.palette.hover);
+    defer ui.end(c);
+    ui.icon(c, "sparkles", .{ .size = 16, .color = s.palette.accent });
+    ui.text(c, prompt, .{ .size = 12.5, .color = s.palette.text, .wrap = true, .leading = 1.35 });
+    if (card.clicked) {
+        s.composer.set(prompt);
+        s.send();
     }
 }
 
 fn transcript(s: *AppState, c: *ui.Context) void {
-    const box = ui.div(c).column().grow().minW(0).wFull().scrollY().px(22).py(6);
+    const box = ui.div(c).column().grow().minW(0).wFull().scrollY().px(22).py(18);
     // The newest turn is the one you want to read.
     box.c.node(box.index).style.follow_end = true;
     defer box.end();
 
     const centre = ui.div(c).row().wFull().justifyCenter();
     defer centre.end();
-    const column = ui.div(c).column().wFull().maxW(content_max).gap(14);
+    const column = ui.div(c).column().wFull().maxW(content_max).gap(22);
     defer column.end();
 
     for (s.messages.items, 0..) |message, i| {
         const doc: ?*const md.Doc = if (i < s.docs.items.len) &s.docs.items[i] else null;
-        messageBubble(s, c, message, doc);
+        messageRow(s, c, message, doc);
     }
 
-    // The answer being written, drawn where the finished one will land.
-    if (s.streaming()) streamingBubble(s, c);
+    if (s.streaming()) streamingRow(s, c);
 }
 
-/// The assistant's answer as it arrives: the same bubble, with a caret at the
-/// end so a pause reads as "still writing" rather than "done".
-fn streamingBubble(s: *AppState, c: *ui.Context) void {
-    const doc: ?*const md.Doc = if (s.stream_doc) |*d| d else null;
-    const row = ui.div(c).row().wFull();
-    defer row.end();
-
-    const width = bubbleWidth(s, c, doc, s.stream_text.items);
-    const bubble = ui.div(c).column().w(width).gap(8).p(13).rounded(13).bg(s.palette.bot_bubble);
-    defer bubble.end();
-
-    if (doc) |d| {
-        for (d.blocks) |block| block_(s, c, block);
-    } else {
-        ui.text(c, s.stream_text.items, .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.4 });
-    }
-
-    // The caret: a small block that blinks with the clock, so a stalled
-    // provider and a finished answer do not look the same.
-    const caret = ui.div(c).row().gap(4).itemsCenter();
-    defer caret.end();
-    // The frame's own clock: no wall clock to read, and it stops when the
-    // window stops drawing, which is exactly when the caret should stop.
-    const blink = @mod(c.time, 1.0) < 0.55;
-    // A block that is drawn or not: the same width either way, so the text
-    // above it does not reflow when the caret blinks.
-    var caret_box = ui.div(c).w(7).h(14);
-    if (blink) caret_box = caret_box.rounded(2).bg(s.palette.accent);
-    caret_box.end();
-}
-
-fn messageBubble(s: *AppState, c: *ui.Context, message: backend.Message, doc: ?*const md.Doc) void {
+/// A message as a full-width row: a role marker on the left, the answer on the
+/// right. Nothing is right-aligned and assistant prose has no bubble, so a
+/// long answer reads like a page rather than a chat log.
+fn messageRow(s: *AppState, c: *ui.Context, message: backend.Message, doc: ?*const md.Doc) void {
     const is_user = message.isUser();
     const is_error = std.mem.eql(u8, message.role, "error");
 
-    var row = ui.div(c).row().wFull();
-    row = if (is_user) row.justifyEnd() else row;
+    const row = ui.div(c).row().wFull().gap(14).itemsStart();
     defer row.end();
 
-    const width = bubbleWidth(s, c, doc, message.content);
-    const bubble = ui.div(c).column().w(width).gap(8).p(13).rounded(13).bg(if (is_user)
-        s.palette.user_bubble
-    else if (is_error)
-        s.palette.danger.alpha(0.13)
-    else
-        s.palette.bot_bubble);
-    defer bubble.end();
+    roleAvatar(s, c, is_user, is_error);
+
+    const content = ui.div(c).column().grow().minW(0).gap(8).pt(3);
+    defer content.end();
+
+    ui.text(c, if (is_user) "You" else if (is_error) "Error" else "nullclaw", .{
+        .size = 12,
+        .weight = .semibold,
+        .color = if (is_error) s.palette.danger else s.palette.muted,
+    });
 
     if (is_error) {
         const lead = ui.div(c).row().gap(7).itemsCenter();
         defer lead.end();
         ui.icon(c, "exclamationmark.triangle.fill", .{ .size = 12, .color = s.palette.danger });
-        ui.text(c, "could not run", .{ .size = 11.5, .weight = .medium, .color = s.palette.danger });
+        ui.text(c, "could not run", .{ .size = 12, .weight = .medium, .color = s.palette.danger });
     }
+
+    // The user's turn gets a soft block; the assistant's sits on the page.
+    const message_body = if (is_user)
+        ui.div(c).column().wFull().p(12).rounded(12).bg(s.palette.user_bubble)
+    else
+        ui.div(c).column().wFull();
+    defer message_body.end();
 
     if (doc) |d| {
-        for (d.blocks) |block| {
-            block_(s, c, block);
-        }
+        for (d.blocks) |block| block_(s, c, block);
     } else {
-        ui.text(c, message.content, .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.4 });
+        ui.text(c, message.content, .{ .size = 14, .color = s.palette.text, .wrap = true, .leading = 1.55 });
     }
 
-    // The stamp the runtime recorded, when it recorded one. A message the
-    // window made up (a failed turn, a local note) has none, and inventing
-    // one would say the runtime wrote it.
     if (message.created_at.len > 0) {
-        const foot = ui.div(c).row().wFull().gap(6).itemsCenter();
-        defer foot.end();
-        if (is_user) ui.spacer(c);
         ui.text(c, backend.formatStamp(c.alloc(), message.created_at), .{
             .size = 10,
             .color = s.palette.faint,
             .tabular = true,
         });
     }
+}
+
+/// The circular marker beside a message. The assistant gets its sparkle; a
+/// person gets a neutral silhouette; an error gets a warning tint.
+fn roleAvatar(s: *AppState, c: *ui.Context, is_user: bool, is_error: bool) void {
+    const bg = if (is_error)
+        s.palette.danger.alpha(0.18)
+    else if (is_user)
+        s.palette.raised
+    else
+        s.palette.accent.alpha(0.16);
+    const dot = ui.div(c).w(avatar_size).h(avatar_size).roundedFull().bg(bg).center();
+    defer dot.end();
+    if (is_user) {
+        ui.icon(c, "person.fill", .{ .size = 15, .color = s.palette.muted });
+    } else if (is_error) {
+        ui.icon(c, "exclamationmark.triangle.fill", .{ .size = 15, .color = s.palette.danger });
+    } else {
+        ui.icon(c, "sparkles", .{ .size = 15, .color = s.palette.accent });
+    }
+}
+
+/// The answer as it arrives: the same row, with a blinking caret at the end.
+fn streamingRow(s: *AppState, c: *ui.Context) void {
+    const doc: ?*const md.Doc = if (s.stream_doc) |*d| d else null;
+    const row = ui.div(c).row().wFull().gap(14).itemsStart();
+    defer row.end();
+
+    roleAvatar(s, c, false, false);
+
+    const content = ui.div(c).column().grow().minW(0).gap(8).pt(3);
+    defer content.end();
+    ui.text(c, "nullclaw", .{ .size = 12, .weight = .semibold, .color = s.palette.muted });
+
+    if (doc) |d| {
+        for (d.blocks) |block| block_(s, c, block);
+    } else {
+        ui.text(c, s.stream_text.items, .{ .size = 14, .color = s.palette.text, .wrap = true, .leading = 1.55 });
+    }
+
+    const blink = @mod(c.time, 1.0) < 0.55;
+    var caret_box = ui.div(c).w(7).h(15);
+    if (blink) caret_box = caret_box.rounded(2).bg(s.palette.accent);
+    caret_box.end();
 }
 
 fn block_(s: *AppState, c: *ui.Context, block: md.Block) void {
@@ -551,45 +662,21 @@ fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
 /// How wide a bubble wants to be: as wide as its widest line, up to a share of
 /// the column. Measuring before laying out keeps a short reply a short bubble
 /// instead of a full-width band.
-fn bubbleWidth(s: *AppState, c: *ui.Context, doc: ?*const md.Doc, fallback: []const u8) f32 {
-    var widest: f32 = 0;
-    if (doc) |d| {
-        for (d.blocks) |block| {
-            if (block.kind == .rule) continue;
-            var style = blockStyle(s, block);
-            style.wrap = false;
-            const extra: f32 = switch (block.kind) {
-                .code => 20,
-                .bullet => 18,
-                .quote => 20,
-                else => 0,
-            };
-            widest = @max(widest, c.text.width(block.text, style) + extra);
-        }
-    }
-    if (widest == 0) {
-        var style = ui.TextStyle{ .size = 13.5, .color = s.palette.text };
-        style.wrap = false;
-        widest = c.text.width(fallback, style);
-    }
-    const cap = content_max * bubble_share;
-    return @max(140, @min(widest + 28, cap));
-}
-
 fn composer(s: *AppState, c: *ui.Context) void {
-    const centre = ui.div(c).row().wFull().justifyCenter().px(22).pt(8).pb(18);
+    const centre = ui.div(c).row().wFull().justifyCenter().px(22).pt(8).pb(20);
     defer centre.end();
-    const column = ui.div(c).column().wFull().maxW(content_max).gap(7);
+    const column = ui.div(c).column().wFull().maxW(content_max).gap(8);
     defer column.end();
 
-    const box = ui.div(c).column().wFull().p(10).gap(8).bg(s.palette.panel)
-        .border(s.palette.border).borderW(1).rounded(12);
+    const box = ui.div(c).column().wFull().p(12).gap(6).bg(s.palette.panel)
+        .border(s.palette.border).borderW(1).rounded(18);
     defer box.end();
 
     const typed = ui.textArea(c, &s.composer, .{
-        .placeholder = if (s.selected == null) "Start a new conversation…" else "Ask nullclaw…",
+        .placeholder = if (s.selected == null) "Ask anything…" else "Message nullclaw…",
         .min_lines = 1,
         .max_lines = 8,
+        .size = 14,
         .color = s.palette.text,
         .caret_color = s.palette.accent,
     });
@@ -599,22 +686,15 @@ fn composer(s: *AppState, c: *ui.Context) void {
     composerHint(s, c);
     ui.spacer(c);
 
-    // Where this message will land. A new chat has a draft key the runtime
-    // has not seen yet, so the line says which conversation is being opened
-    // rather than leaving the person to guess.
     if (s.sending) {
         const writing = ui.div(c).row().gap(6).itemsCenter();
         defer writing.end();
-        ui.icon(c, "ellipsis.circle", .{ .size = 11, .color = s.palette.accent });
+        ui.icon(c, "ellipsis.circle", .{ .size = 12, .color = s.palette.accent });
         ui.text(c, if (s.streaming()) "writing…" else "thinking…", .{
             .size = 11.5,
             .color = s.palette.accent,
         });
-    }
-
-    // While a turn runs the primary button stops it: a long answer with no
-    // way out is the one thing a chat window must not do.
-    if (s.sending) {
+        // A long answer with no way out is the one thing a chat must not do.
         const halt = ui.button(c, "", .{
             .variant = .secondary,
             .icon = "stop.circle",
@@ -624,20 +704,29 @@ fn composer(s: *AppState, c: *ui.Context) void {
         return;
     }
 
-    const send = ui.button(c, "", .{
-        .variant = .primary,
-        .icon = "arrow.up",
-        .size = 12,
-        .disabled = s.composer.text().len == 0,
-    });
-    if (send.clicked or typed.submitted) s.send();
+    // The round send control: an accent disc with an up arrow, the shape
+    // people now expect from a chat composer.
+    const can_send = s.composer.text().len != 0;
+    const send = ui.pressable(c, .{
+        .direction = .row,
+        .width = .{ .px = 34 },
+        .height = .{ .px = 34 },
+        .radius = 17,
+        .justify = .center,
+        .align_items = .center,
+        .background = if (can_send) s.palette.accent else s.palette.raised,
+    }, s.palette.hover);
+    defer ui.end(c);
+    ui.icon(c, "arrow.up", .{ .size = 16, .color = if (can_send) s.palette.accent_text else s.palette.faint });
+    if (send.clicked and can_send) s.send();
+    _ = typed;
 }
 
 fn composerHint(s: *AppState, c: *ui.Context) void {
     const typed = s.composer.text();
     if (typed.len == 0) {
-        // The session name, so a window with several chats open says which
-        // one the next message belongs to.
+        // Keep "return to send" as the stable anchor for tests and for anyone
+        // who wonders why Return submits; lead with where the turn will land.
         const where = s.turnSession() orelse "new conversation";
         ui.textf(c, .{ .size = 10.5, .color = s.palette.faint }, "{s} · return to send · shift-return for a new line", .{where});
         return;

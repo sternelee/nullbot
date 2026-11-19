@@ -30,6 +30,32 @@ pub const Palette = struct {
     code_bg: Color,
 };
 
+/// ChatGPT-like: neutral warm greys, a restrained green accent, and no
+/// coloured bubbles. Assistant answers sit on the page background, so long
+/// prose reads like a document rather than a chat log. This is the default.
+pub const neutral = Palette{
+    .dark = true,
+    .bg = Color.hex(0x212121),
+    .shell = Color.hex(0x171717),
+    .panel = Color.hex(0x2f2f2f),
+    .raised = Color.hex(0x2a2a2a),
+    .hover = Color.hex(0x343434),
+    .border = Color.hex(0x3d3d3d),
+    .text = Color.hex(0xf4f4f4),
+    .muted = Color.hex(0xa9a9a9),
+    .faint = Color.hex(0x7d7d7d),
+    .accent = Color.hex(0x19c37d),
+    .accent_text = Color.hex(0x0b1a12),
+    .danger = Color.hex(0xf87171),
+    .warning = Color.hex(0xe3b341),
+    .success = Color.hex(0x19c37d),
+    // The user's turn gets a subtle raised block; the assistant's stays on
+    // the page background. Both are near-neutral so neither shouts.
+    .user_bubble = Color.hex(0x303030),
+    .bot_bubble = Color.hex(0x212121),
+    .code_bg = Color.hex(0x171717),
+};
+
 /// The default: a cool near-black, blue accent.
 pub const midnight = Palette{
     .dark = true,
@@ -172,6 +198,7 @@ pub const Named = struct {
 /// The palettes the switcher offers, in the order it lists them. The first is
 /// the default, and it is the one the web client opens on.
 pub const choices = [_]Named{
+    .{ .name = "Neutral", .palette = neutral },
     .{ .name = "Matrix", .palette = matrix },
     .{ .name = "Midnight", .palette = midnight },
     .{ .name = "Dracula", .palette = dracula },
@@ -223,7 +250,7 @@ test "paper is the light variant" {
 }
 
 test "choices name the palettes the switcher offers" {
-    try testing.expectEqualStrings("Matrix", choices[0].name);
+    try testing.expectEqualStrings("Neutral", choices[0].name);
     try testing.expectEqualStrings("Paper", choices[choices.len - 1].name);
     // Every palette is distinguishable, so a switch is visible. `Color` is a
     // struct of floats and has no equality operator, so the comparison is on

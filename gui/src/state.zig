@@ -116,11 +116,25 @@ pub const Page = enum {
     }
 };
 
-/// The pages the sidebar lists, in order.
+/// The pages the sidebar lists, in order. Kept flat for callers that just
+/// want every page; the sidebar groups them through `nav_groups` below.
 pub const nav = [_]Page{
     .chat,     .config,   .status, .capabilities, .models, .memory,
     .skills,   .channels, .cron,   .mcp,          .auth,   .workspace,
     .hardware, .service,  .update, .doctor,
+};
+
+/// A labelled group of pages in the sidebar. The order here is the order the
+/// pages draw in, and every page in `nav` appears in exactly one group.
+pub const NavGroup = struct {
+    title: []const u8,
+    pages: []const Page,
+};
+
+pub const nav_groups = [_]NavGroup{
+    .{ .title = "Workspace", .pages = &.{ .chat, .config, .workspace, .skills, .memory } },
+    .{ .title = "Runtime", .pages = &.{ .models, .capabilities, .channels, .mcp, .cron, .status } },
+    .{ .title = "System", .pages = &.{ .auth, .hardware, .service, .update, .doctor } },
 };
 
 /// Provider ids nullclaw's provider factory knows. Shown in the
@@ -203,6 +217,9 @@ pub const AppState = struct {
     /// The sidebar's rows.
     sessions: std.ArrayListUnmanaged(backend.Session) = .empty,
     selected: ?usize = null,
+    /// Filters the session list by key. A view-only concern: it never changes
+    /// `selected`, which stays an index into `sessions` itself.
+    session_search: ui.TextBuffer = .{},
     /// The selected session's transcript, and each message's reply parsed for
     /// drawing. Parsing is cached here so a frame never re-reads markdown.
     messages: std.ArrayListUnmanaged(backend.Message) = .empty,
@@ -351,6 +368,7 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
+        self.session_search.deinit();
         self.stream_text.deinit(self.gpa);
         self.draft_session.deinit(self.gpa);
         if (self.stream_doc) |*d| d.deinit();
