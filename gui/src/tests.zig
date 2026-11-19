@@ -24,10 +24,27 @@ test "the window draws its shell, sidebar and composer" {
     defer w.deinit();
 
     w.tester.settle(0.5);
-    try testing.expect(w.tester.hasText("nullclaw"));
+    try testing.expect(w.tester.containsText("nullclaw"));
     try testing.expect(w.tester.hasText("Sessions"));
     try testing.expect(w.tester.hasText("No sessions yet"));
     try testing.expect(w.tester.hasText("What can I help with?"));
+}
+
+test "the brand menu reaches the configuration page" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.tester.settle(0.5);
+    try w.tester.clickText("nullclaw ⌄");
+    w.tester.settle(0.6);
+    // The menu lists the non-chat pages; Configuration is the one the user
+    // asked to move behind a collapsible entry.
+    try testing.expect(w.tester.hasText("Configuration"));
+    try w.tester.clickText("Configuration");
+    w.tester.settle(0.5);
+    try testing.expectEqual(state.Page.config, w.app.page);
+    try testing.expect(!w.app.menu_open);
 }
 
 test "every page names itself in the sidebar and the header" {
@@ -148,7 +165,7 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
     w.app.pushMessage("assistant", "an answer");
     w.tester.settle(0.5);
 
-    const brand = w.tester.findText("nullclaw") orelse return error.NoBrand;
+    const brand = w.tester.findText("nullclaw ⌄") orelse return error.NoBrand;
     const heading = w.tester.findText("Sessions") orelse return error.NoSessions;
     const question = w.tester.findText("a question") orelse return error.NoQuestion;
     const answer = w.tester.findText("an answer") orelse return error.NoAnswer;
@@ -162,17 +179,18 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
         break :blk null;
     } orelse return error.NoComposer;
 
-    // The sidebar is the left column: its section heading starts at the
-    // sidebar's own padding, and the brand sits in from there, past its icon.
+    // The rail is the leftmost strip, then the sidebar: its section heading
+    // starts at the sidebar's own padding, and the brand sits in from there.
+    const left = view.rail_width + view.sidebar_width;
     try testing.expect(heading.x < brand.x);
-    try testing.expect(brand.x < view.sidebar_width);
-    try testing.expect(heading.x < view.sidebar_width / 2);
+    try testing.expect(brand.x < left);
+    try testing.expect(heading.x < view.rail_width + view.sidebar_width / 2);
 
     // The transcript is the other column: both messages sit right of the
-    // sidebar, past the avatar gutter.
-    try testing.expect(question.x > view.sidebar_width);
-    try testing.expect(answer.x > view.sidebar_width);
-    try testing.expect(question.x > view.sidebar_width + 60);
+    // rail and sidebar, past the avatar gutter.
+    try testing.expect(question.x > left);
+    try testing.expect(answer.x > left);
+    try testing.expect(question.x > left + 60);
 
     // The ChatGPT-style layout: every message is a full-width row with the
     // text at the same left edge, after its role avatar. Nothing is

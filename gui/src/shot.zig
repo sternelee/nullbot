@@ -45,6 +45,14 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "01-chat-empty");
 
+    // The "nullclaw ∨" menu open: every non-chat page, including the
+    // configuration editor, is reached from this one collapsible entry.
+    try w.tester.clickText("nullclaw ⌄");
+    w.tester.settle(0.6);
+    try shoot(&w, "01b-brand-menu");
+    w.app.menu_open = false;
+    w.tester.settle(0.3);
+
     // A conversation: the transcript comes back from the runtime, and the
     // markdown the model writes is drawn as text rather than asterisks.
     w.app.refreshSessions();

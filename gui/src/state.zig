@@ -116,25 +116,12 @@ pub const Page = enum {
     }
 };
 
-/// The pages the sidebar lists, in order. Kept flat for callers that just
-/// want every page; the sidebar groups them through `nav_groups` below.
+/// Every page, in order. The brand menu lists all but chat; the rail and the
+/// mode tabs open the two that matter most.
 pub const nav = [_]Page{
     .chat,     .config,   .status, .capabilities, .models, .memory,
     .skills,   .channels, .cron,   .mcp,          .auth,   .workspace,
     .hardware, .service,  .update, .doctor,
-};
-
-/// A labelled group of pages in the sidebar. The order here is the order the
-/// pages draw in, and every page in `nav` appears in exactly one group.
-pub const NavGroup = struct {
-    title: []const u8,
-    pages: []const Page,
-};
-
-pub const nav_groups = [_]NavGroup{
-    .{ .title = "Workspace", .pages = &.{ .chat, .config, .workspace, .skills, .memory } },
-    .{ .title = "Runtime", .pages = &.{ .models, .capabilities, .channels, .mcp, .cron, .status } },
-    .{ .title = "System", .pages = &.{ .auth, .hardware, .service, .update, .doctor } },
 };
 
 /// Provider ids nullclaw's provider factory knows. Shown in the
@@ -306,6 +293,12 @@ pub const AppState = struct {
     palette_index: usize = 0,
     palette: theme.Palette = theme.choices[0].palette,
     theme_menu_open: bool = false,
+    /// The "nullclaw ∨" menu beside the brand. Every non-chat page lives in
+    /// it, so the sidebar stays a list of conversations, like the web client.
+    menu_open: bool = false,
+    /// The top-of-page mode switch. Chat is the conversation; Work is the
+    /// runtime's tools. Work opens the first tool page when chosen.
+    active_tab: enum { chat, work } = .chat,
     /// The diagnostics panel the sidebar's footer opens.
     diagnostics_open: bool = false,
 

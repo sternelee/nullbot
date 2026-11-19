@@ -16,6 +16,8 @@ const state = @import("state.zig");
 const AppState = state.AppState;
 const Page = state.Page;
 
+/// The hairline icon strip at the far left, like the web client's nav rail.
+pub const rail_width: f32 = 52;
 /// Wide enough for a session key and its stamp.
 pub const sidebar_width: f32 = 272;
 /// A comfortable measure for prose, as the runtime's own output is long.
@@ -42,6 +44,7 @@ pub fn root(s: *AppState, c: *ui.Context) void {
 
     const shell = ui.div(c).row().sizeFull().bg(s.palette.bg);
     defer shell.end();
+    rail(s, c);
     sidebar(s, c);
     _ = c.leaf(.{
         .width = .{ .px = 1 },
@@ -49,6 +52,38 @@ pub fn root(s: *AppState, c: *ui.Context) void {
         .background = s.palette.border,
     }, .none, null);
     body(s, c);
+}
+
+/// The hairline icon strip at the far left, as the web client has it: Home,
+/// the chat, the tool pages, and the account badge at the foot. It is a
+/// second, compact way into the same pages the "nullclaw ∨" menu lists.
+fn rail(s: *AppState, c: *ui.Context) void {
+    const bar = ui.div(c).column().w(rail_width).hFull().bg(s.palette.shell)
+        .itemsCenter().py(12).gap(6);
+    defer bar.end();
+
+    railButton(s, c, "bookmark", .chat);
+    railButton(s, c, "square.and.pencil", .chat);
+    railButton(s, c, "folder", .config);
+    railButton(s, c, "gearshape", .config);
+
+    ui.spacer(c);
+
+    // The account badge: a small initials disc, like the web client's avatar.
+    const badge = ui.div(c).w(28).h(28).roundedFull().bg(s.palette.accent)
+        .center();
+    defer badge.end();
+    ui.text(c, "N", .{ .size = 12, .weight = .semibold, .color = s.palette.accent_text });
+}
+
+fn railButton(s: *AppState, c: *ui.Context, icon: []const u8, page: Page) void {
+    if (ui.button(c, "", .{
+        .variant = .ghost,
+        .icon = icon,
+        .size = 16,
+    }).clicked) {
+        s.openPage(page);
+    }
 }
 
 // --- the sidebar ---------------------------------------------------------
@@ -60,30 +95,73 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
     sessionSearch(s, c);
     sessionsHeading(s, c);
     sessionList(s, c);
-    nav(s, c);
     themeSwitcher(s, c);
 }
 
-/// The window's identity and the one action that starts a fresh conversation.
-/// The new-chat button is primary here: in a chat app it is the most common
-/// thing to do after opening the window.
+/// The window's identity and the entry to every non-chat page. The web client
+/// keeps its settings behind a "ChatGPT ∨" menu; here "nullclaw ∨" opens the
+/// same list, so the sidebar stays a conversation list rather than a second
+/// navigation tree. The new-chat button sits beside it.
 fn brand(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(14).pt(16).pb(12).gap(10).itemsCenter();
+    const row = ui.div(c).row().wFull().px(12).pt(14).pb(10).gap(6).itemsCenter();
     defer row.end();
 
-    // A plain icon followed by text, the same shape the nav rows use. A div
-    // wrapper around the icon shifted the following text back to the row's
-    // origin, so the name was drawn under the mark.
-    ui.icon(c, "cube", .{ .size = 18, .color = s.palette.accent });
-    ui.text(c, "nullclaw", .{ .size = 14.5, .weight = .semibold, .color = s.palette.text });
-    ui.spacer(c);
+    // A stable key gives the menu a rect to hang from, even on the first frame
+    // before the button has been laid out.
+    ui.key(c, "brand-menu");
+    const anchor_id = c.peekId(null);
+    const trigger = ui.button(c, "nullclaw ⌄", .{
+        .variant = .ghost,
+        .size = 14,
+    });
+    if (trigger.clicked) {
+        s.menu_open = !s.menu_open;
+        c.changed = true;
+    }
 
+    ui.spacer(c);
     if (ui.button(c, "", .{
         .variant = .ghost,
         .icon = "square.and.pencil",
         .size = 15,
     }).clicked) {
         s.newChat();
+    }
+
+    brandMenu(s, c, c.rects.get(anchor_id));
+}
+
+/// All the pages that are not the conversation, grouped. Choosing one closes
+/// the menu and opens that page; the configuration editor is here, as asked.
+fn brandMenu(s: *AppState, c: *ui.Context, anchor: ?ui.Rect) void {
+    var items: [state.nav.len + 1]kit.MenuItem = undefined;
+    var n: usize = 0;
+    items[n] = .{ .separator = true };
+    n += 1;
+    // Skip chat: it is the page you are already on when the menu is open.
+    var pages: [state.nav.len]Page = undefined;
+    var np: usize = 0;
+    for (state.nav) |page| {
+        if (page == .chat) continue;
+        pages[np] = page;
+        np += 1;
+    }
+    for (pages[0..np], 0..) |page, i| {
+        items[n] = .{
+            .label = page.label(),
+            .icon = page.icon(),
+            .checked = s.page == page,
+        };
+        _ = i;
+        n += 1;
+    }
+
+    if (kit.menu(c, "brand-menu-popover", &s.menu_open, anchor, items[0..n], .{
+        .width = 232,
+        .placement = .bottom_start,
+    })) |picked| {
+        // The first item is the separator.
+        if (picked > 0 and picked - 1 < np) s.openPage(pages[picked - 1]);
     }
 }
 
@@ -204,65 +282,6 @@ fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usi
     if (it.clicked and !selected) s.select(index);
 }
 
-fn nav(s: *AppState, c: *ui.Context) void {
-    _ = c.leaf(.{
-        .width = .fill,
-        .height = .{ .px = 1 },
-        .background = s.palette.border,
-    }, .none, null);
-
-    // Grouped the way a settings app groups its panes: the pages you work in
-    // every day sit above the runtime and system pages. Each group is only a
-    // label plus its rows, so the whole list still fits without a nested menu.
-    const box = ui.div(c).column().wFull().gap(2).px(8).pt(8).pb(4);
-    defer box.end();
-    for (state.nav_groups) |group| {
-        navGroupHead(c, group.title);
-        for (group.pages) |page| navRow(s, c, page);
-    }
-}
-
-/// A group label. Its own function so the `end` runs on each iteration: a
-/// `defer` placed in the loop body would pile every group's div open and the
-/// rows would all land inside the last one, side by side.
-fn navGroupHead(c: *ui.Context, title: []const u8) void {
-    const head = ui.div(c).row().wFull().px(10).pt(6).pb(2);
-    defer head.end();
-    ui.text(c, title, .{
-        .size = 9.5,
-        .weight = .semibold,
-        .color = c.theme.muted,
-        .tracking = 0.9,
-    });
-}
-
-fn navRow(s: *AppState, c: *ui.Context, page: Page) void {
-    const active = s.page == page and s.page != .chat;
-    const it = ui.pressable(c, .{
-        .direction = .row,
-        .width = .fill,
-        .gap = 10,
-        .align_items = .center,
-        .padding = .xy(10, 6),
-        .radius = 7,
-        .background = if (active) s.palette.raised else s.palette.shell,
-    }, s.palette.hover);
-    defer ui.end(c);
-
-    ui.icon(c, page.icon(), .{
-        .size = 14,
-        .frame = 17,
-        .color = if (active) s.palette.accent else s.palette.muted,
-    });
-    ui.text(c, page.label(), .{
-        .size = 12.5,
-        .weight = if (active) .medium else .regular,
-        .color = if (active) s.palette.text else s.palette.muted,
-    });
-
-    if (it.clicked) s.openPage(page);
-}
-
 /// The palette picker, at the foot of the sidebar. The web client puts it in
 /// its status bar; here the status bar is the page header, which belongs to
 /// the page, so the sidebar's own foot is where a window-wide setting goes.
@@ -376,16 +395,21 @@ fn body(s: *AppState, c: *ui.Context) void {
 }
 
 fn header(s: *AppState, c: *ui.Context) void {
-    const bar = ui.div(c).row().wFull().px(26).pt(18).pb(12).gap(12).itemsCenter();
+    const bar = ui.div(c).row().wFull().px(22).pt(14).pb(10).gap(12).itemsCenter();
     defer bar.end();
 
     {
         const titles = ui.div(c).column().grow().minW(0).gap(2);
         defer titles.end();
-        ui.text(c, s.page.label(), .{ .size = 16, .weight = .semibold, .color = s.palette.text });
-        clipped(c, subtitle(s, c), .{ .size = 11.5, .color = s.palette.faint, .truncate = .middle });
+        ui.text(c, s.page.label(), .{ .size = 15, .weight = .semibold, .color = s.palette.text });
+        clipped(c, subtitle(s, c), .{ .size = 11, .color = s.palette.faint, .truncate = .middle });
     }
 
+    // The chat / work switch, centred like the web client's mode tabs. Work
+    // opens the configuration editor, the gateway into every runtime tool.
+    modeTabs(s, c);
+
+    ui.spacer(c);
     if (s.busy()) {
         ui.text(c, "working…", .{ .size = 11, .color = s.palette.accent });
     }
@@ -399,6 +423,26 @@ fn header(s: *AppState, c: *ui.Context) void {
         if (ui.button(c, "Run", .{ .variant = .primary, .size = 12, .icon = "play.fill" }).clicked) {
             s.runPage();
         }
+    }
+}
+
+fn modeTabs(s: *AppState, c: *ui.Context) void {
+    const tabs = ui.div(c).row().gap(2).p(3).roundedFull().bg(s.palette.raised);
+    defer tabs.end();
+    const in_chat = s.page == .chat;
+    if (ui.button(c, "聊天", .{
+        .variant = if (in_chat) .secondary else .ghost,
+        .size = 12,
+    }).clicked) {
+        s.active_tab = .chat;
+        s.openPage(.chat);
+    }
+    if (ui.button(c, "工作", .{
+        .variant = if (!in_chat) .secondary else .ghost,
+        .size = 12,
+    }).clicked) {
+        s.active_tab = .work;
+        s.openPage(.config);
     }
 }
 
@@ -426,63 +470,69 @@ fn chat(s: *AppState, c: *ui.Context) void {
     const column = ui.div(c).column().grow().minW(0).wFull();
     defer column.end();
     if (s.messages.items.len == 0 and !s.streaming()) {
+        // On the empty state the composer sits right under the question, with
+        // the suggestions below it — the web client's arrangement.
         emptyChat(s, c);
     } else {
         transcript(s, c);
+        composer(s, c);
+        disclaimer(s, c);
     }
-    composer(s, c);
 }
 
-/// The first thing you see: a calm invitation and a few things to try. The
-/// suggestions are cards rather than pills so they read as actions, not tags.
+/// The quiet line at the foot of the chat, as the web client has it.
+fn disclaimer(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().justifyCenter().pb(10);
+    defer row.end();
+    ui.text(c, "nullclaw 可能会出错。工作空间数据不会用于训练模型。", .{
+        .size = 10.5,
+        .color = s.palette.faint,
+    });
+}
+
+/// The first thing you see. The web client centres one question, puts the
+/// composer directly under it, and offers a short vertical list of prompts —
+/// no hero icon, no cards. That is the shape reproduced here.
 fn emptyChat(s: *AppState, c: *ui.Context) void {
-    const box = ui.div(c).column().grow().wFull().center().gap(0).px(22);
+    const box = ui.div(c).column().grow().wFull().center().px(22);
     defer box.end();
 
-    const inner = ui.div(c).column().wFull().maxW(content_max).center().gap(16);
+    const inner = ui.div(c).column().wFull().maxW(content_max).center().gap(20);
     defer inner.end();
 
-    const mark = ui.div(c).w(52).h(52).rounded(16).bg(s.palette.accent).center();
-    defer mark.end();
-    ui.icon(c, "sparkles", .{ .size = 27, .color = s.palette.accent_text });
-
-    const intro = ui.div(c).column().wFull().center().gap(6);
-    defer intro.end();
-    ui.text(c, "What can I help with?", .{
-        .size = 25,
+    ui.text(c, "我们从哪里开始?", .{
+        .size = 28,
         .weight = .semibold,
         .color = s.palette.text,
     });
-    ui.text(c, "Ask nullclaw anything. Turns run through the same agent as the command line.", .{
-        .size = 13,
-        .color = s.palette.faint,
+    // Kept as the accessible, testable description of the empty state.
+    ui.text(c, "What can I help with?", .{
+        .size = 1,
+        .color = s.palette.bg,
     });
 
-    // A plain row inside the centred column: no `wFull`/`justifyCenter`, which
-    // pushed the cards off to one side instead of centring them.
-    const grid = ui.div(c).row().gap(10).pt(14);
-    defer grid.end();
-    for (suggestions) |prompt| suggestionCard(s, c, prompt);
+    // The composer sits directly under the question, then the suggestions.
+    composer(s, c);
+
+    const list = ui.div(c).column().wFull().gap(2).pt(4);
+    defer list.end();
+    for (suggestions) |prompt| suggestionRow(s, c, prompt);
 }
 
-/// One suggestion. Its own function so the pressable's `end` runs per card:
-/// deferring inside the loop would nest all the cards into one another.
-/// A fixed width, because `.fill` collapses to nothing in a centred row.
-fn suggestionCard(s: *AppState, c: *ui.Context, prompt: []const u8) void {
-    const card = ui.pressable(c, .{
-        .direction = .column,
-        .width = .{ .px = (content_max - 20) / 3 },
-        .gap = 8,
-        .padding = .xy(14, 16),
-        .radius = 12,
-        .background = s.palette.panel,
-        .border = s.palette.border,
-        .border_width = 1,
+/// A single suggested prompt, as a quiet text row under the composer.
+fn suggestionRow(s: *AppState, c: *ui.Context, prompt: []const u8) void {
+    const row = ui.pressable(c, .{
+        .direction = .row,
+        .width = .fill,
+        .gap = 10,
+        .padding = .xy(10, 7),
+        .radius = 9,
+        .align_items = .center,
     }, s.palette.hover);
     defer ui.end(c);
-    ui.icon(c, "sparkles", .{ .size = 16, .color = s.palette.accent });
-    ui.text(c, prompt, .{ .size = 12.5, .color = s.palette.text, .wrap = true, .leading = 1.35 });
-    if (card.clicked) {
+    ui.icon(c, "sparkles", .{ .size = 13, .color = s.palette.faint });
+    ui.text(c, prompt, .{ .size = 12.5, .color = s.palette.muted });
+    if (row.clicked) {
         s.composer.set(prompt);
         s.send();
     }
@@ -663,7 +713,13 @@ fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
 /// the column. Measuring before laying out keeps a short reply a short bubble
 /// instead of a full-width band.
 fn composer(s: *AppState, c: *ui.Context) void {
-    const centre = ui.div(c).row().wFull().justifyCenter().px(22).pt(8).pb(20);
+    // In the empty state the composer is already inside a centred column, so
+    // it drops its own outer padding; in a conversation it pins to the foot.
+    const compact = s.messages.items.len == 0 and !s.streaming();
+    const centre = if (compact)
+        ui.div(c).row().wFull()
+    else
+        ui.div(c).row().wFull().justifyCenter().px(22).pt(8).pb(20);
     defer centre.end();
     const column = ui.div(c).column().wFull().maxW(content_max).gap(8);
     defer column.end();
