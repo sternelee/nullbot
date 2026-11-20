@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 
 const state = @import("state.zig");
+const backend = @import("backend.zig");
 const view = @import("view.zig");
 const harness = @import("harness.zig");
 const Window = harness.Window;
@@ -75,6 +76,72 @@ test "a session row shows its key and its turns" {
     w.tester.settle(0.5);
     try testing.expect(w.tester.hasText("telegram:42"));
     try testing.expect(w.tester.hasText("3 turns"));
+    // The row sits under the heading for when it last spoke.
+    try testing.expect(w.tester.hasText("Older"));
+}
+
+// Sessions are grouped the way the web client groups them, so a long list
+// reads as "when" instead of as one undifferentiated column.
+test "sessions are grouped under the day they last spoke" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // The grouping is against the clock, so the fresh session is stamped with
+    // today's date rather than with a fixed one that would age out of the
+    // bucket this test is about.
+    const year_day = (std.time.epoch.EpochDay{ .day = @intCast(backend.todayDay(w.app.io)) }).calculateYearDay();
+    const month_day = year_day.calculateMonthDay();
+    const stamp = try std.fmt.allocPrint(testing.allocator, "{d:0>4}-{d:0>2}-{d:0>2}T09:00:00Z", .{
+        year_day.year,
+        @backingInt(month_day.month),
+        month_day.day_index + 1,
+    });
+    defer testing.allocator.free(stamp);
+
+    try w.app.sessions.append(testing.allocator, .{
+        .key = try testing.allocator.dupe(u8, "today:1"),
+        .created_at = try testing.allocator.dupe(u8, stamp),
+        .last_active = try testing.allocator.dupe(u8, stamp),
+    });
+    try w.app.sessions.append(testing.allocator, .{
+        .key = try testing.allocator.dupe(u8, "stale:2"),
+        .created_at = try testing.allocator.dupe(u8, "2020-01-02T03:04:05Z"),
+        .last_active = try testing.allocator.dupe(u8, "2020-01-02T03:04:05Z"),
+    });
+
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("Today"));
+    try testing.expect(w.tester.hasText("Older"));
+    // Newest first: the heading is only useful if the list is in the order the
+    // headings claim.
+    const fresh = w.tester.findText("today:1") orelse return error.NoFreshRow;
+    const stale = w.tester.findText("stale:2") orelse return error.NoStaleRow;
+    try testing.expect(fresh.y < stale.y);
+}
+
+// The strip is a list of distinct places. Two buttons over one page is how it
+// shipped, and it is the kind of thing that comes back by accident.
+test "the rail's destinations are distinct and real" {
+    var seen: [view.rail_entries.len]?state.Page = @splat(null);
+    var new_chat: usize = 0;
+    for (view.rail_entries, 0..) |entry, i| {
+        try testing.expect(entry.label.len > 0);
+        try testing.expect(entry.icon.len > 0);
+        switch (entry.target) {
+            .new_chat => new_chat += 1,
+            .page => |page| {
+                for (seen[0..i]) |earlier| {
+                    if (earlier != null and earlier.? == page) return error.DuplicateRailDestination;
+                }
+                seen[i] = page;
+                // A destination the window cannot draw would be a dead button.
+                try testing.expect(std.mem.indexOfScalar(state.Page, &state.nav, page) != null);
+            },
+        }
+    }
+    // Exactly one button starts a conversation; the rest are places.
+    try testing.expectEqual(@as(usize, 1), new_chat);
 }
 
 test "a transcript draws markdown and retires the empty state" {
@@ -496,7 +563,7 @@ test "the window links the runtime rather than spawning one" {
 // (`square.and.arrow.down`, `hexagon.fill`, `tray`, …), so they drew as
 // missing-glyph boxes — the Save button read "d Save & restart". This walks
 // the source and fails on any name the toolkit cannot draw.
-test "every icon the view names exists in the toolkit" {
+test "every icon the view and the page table name exists in the toolkit" {
     const io = std.Io.Threaded.global_single_threaded.io();
     const icons_src = try std.Io.Dir.cwd().readFileAlloc(io, "zig-pkg/nanoui-0.13.0-we0KMd1-MQBzJq1VU59oWYKF3KHhSYPj8_qjVe2icq_e/src/ui/icons.zig", testing.allocator, .limited(1 << 20));
     defer testing.allocator.free(icons_src);
@@ -544,6 +611,15 @@ test "every icon the view names exists in the toolkit" {
         }
     }
     try testing.expect(checked > 10);
+
+    // The page table lives in state.zig, so the scan above never reaches it —
+    // and ten of its sixteen names were not in the toolkit. Check it by value.
+    for (state.nav) |page| {
+        if (!known.contains(page.icon())) {
+            std.debug.print("page `{s}` wears icon `{s}`, which is not in the toolkit\n", .{ page.label(), page.icon() });
+            return error.UnknownIcon;
+        }
+    }
 }
 
 // The page is an editor, not a viewer: what the form holds has to reach the

@@ -53,6 +53,14 @@ test "screenshots" {
     w.app.menu_open = false;
     w.tester.settle(0.3);
 
+    // The palette menu, hung off the footer's palette button. It is view state
+    // rather than a runtime answer, so it is the one popover opened by hand.
+    w.app.theme_menu_open = true;
+    w.tester.settle(0.4);
+    try shoot(&w, "01c-theme-menu");
+    w.app.theme_menu_open = false;
+    w.tester.settle(0.2);
+
     // A conversation: the transcript comes back from the runtime, and the
     // markdown the model writes is drawn as text rather than asterisks.
     w.app.refreshSessions();

@@ -54,36 +54,84 @@ pub fn root(s: *AppState, c: *ui.Context) void {
     body(s, c);
 }
 
-/// The hairline icon strip at the far left, as the web client has it: Home,
-/// the chat, the tool pages, and the account badge at the foot. It is a
-/// second, compact way into the same pages the "nullclaw ∨" menu lists.
+/// The hairline icon strip at the far left, as the web client has it: a new
+/// chat, the conversation, the workspace, and the configuration, with the
+/// account badge at the foot. Every button is a place you can actually get
+/// to — the strip used to carry four icons over two pages, so half of it did
+/// nothing the other half had not already done.
 fn rail(s: *AppState, c: *ui.Context) void {
     const bar = ui.div(c).column().w(rail_width).hFull().bg(s.palette.shell)
         .itemsCenter().py(12).gap(6);
     defer bar.end();
 
-    railButton(s, c, "bookmark", .chat);
-    railButton(s, c, "square.and.pencil", .chat);
-    railButton(s, c, "folder", .config);
-    railButton(s, c, "gearshape", .config);
+    for (rail_entries) |entry| railButton(s, c, entry);
 
     ui.spacer(c);
-
-    // The account badge: a small initials disc, like the web client's avatar.
-    const badge = ui.div(c).w(28).h(28).roundedFull().bg(s.palette.accent)
-        .center();
-    defer badge.end();
-    ui.text(c, "N", .{ .size = 12, .weight = .semibold, .color = s.palette.accent_text });
+    railAccount(s, c);
 }
 
-fn railButton(s: *AppState, c: *ui.Context, icon: []const u8, page: Page) void {
-    if (ui.button(c, "", .{
-        .variant = .ghost,
-        .icon = icon,
+/// What a rail button does: open a page, or start a conversation. Only the
+/// new-chat button is the latter, which is why the strip is not a page list.
+pub const RailTarget = union(enum) {
+    new_chat,
+    page: Page,
+};
+
+const RailEntry = struct {
+    icon: []const u8,
+    label: []const u8,
+    target: RailTarget,
+};
+
+/// The strip's buttons, top to bottom. They live in a table rather than in the
+/// draw call so that "two buttons, one destination" — the shape the strip
+/// shipped with, where half of it did nothing the other half had not already
+/// done — is something a test can catch instead of something a reader has to
+/// notice.
+pub const rail_entries = [_]RailEntry{
+    .{ .icon = "square.and.pencil", .label = "New chat", .target = .new_chat },
+    .{ .icon = "text.cursor", .label = "Chat", .target = .{ .page = .chat } },
+    .{ .icon = "folder", .label = "Workspace", .target = .{ .page = .workspace } },
+    .{ .icon = "gearshape", .label = "Configuration", .target = .{ .page = .config } },
+};
+
+fn railButton(s: *AppState, c: *ui.Context, entry: RailEntry) void {
+    // The page you are on keeps its button lit, so the strip says where you
+    // are rather than only where you could go.
+    const active = switch (entry.target) {
+        .new_chat => false,
+        .page => |page| s.page == page,
+    };
+    const it = ui.button(c, "", .{
+        .variant = if (active) .secondary else .ghost,
+        .icon = entry.icon,
         .size = 16,
-    }).clicked) {
-        s.openPage(page);
+        .width = .{ .px = 36 },
+    });
+    // An icon-only strip has no room to say what a glyph means, so the label
+    // is on the hover instead of nowhere.
+    kit.tooltip(c, it, entry.label, .{});
+    if (!it.clicked) return;
+    switch (entry.target) {
+        .new_chat => s.newChat(),
+        .page => |page| s.openPage(page),
     }
+}
+
+/// The account badge at the strip's foot, and the way into diagnostics.
+fn railAccount(s: *AppState, c: *ui.Context) void {
+    const it = ui.pressable(c, .{
+        .width = .{ .px = 28 },
+        .height = .{ .px = 28 },
+        .radius = 14,
+        .justify = .center,
+        .align_items = .center,
+        .background = s.palette.accent,
+    }, s.palette.hover);
+    defer ui.end(c);
+    ui.text(c, "N", .{ .size = 12, .weight = .semibold, .color = s.palette.accent_text });
+    kit.tooltip(c, it, "Diagnostics", .{});
+    if (it.clicked) s.diagnostics_open = true;
 }
 
 // --- the sidebar ---------------------------------------------------------
@@ -95,7 +143,7 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
     sessionSearch(s, c);
     sessionsHeading(s, c);
     sessionList(s, c);
-    themeSwitcher(s, c);
+    sidebarFooter(s, c);
 }
 
 /// The window's identity and the entry to every non-chat page. The web client
@@ -230,8 +278,19 @@ fn sessionList(s: *AppState, c: *ui.Context) void {
     }
 
     var shown: usize = 0;
+    // Rows are grouped the way a chat client groups them: by how long ago the
+    // conversation was last touched. The heading is drawn when the group
+    // changes and only for rows the search kept, so filtering never leaves a
+    // heading standing over nothing.
+    const today = backend.todayDay(s.io);
+    var group: ?backend.Recency = null;
     for (s.sessions.items, 0..) |session, i| {
         if (!matchesSearch(s, session.key)) continue;
+        const recency = backend.recencyOf(session.last_active, today);
+        if (group == null or group.? != recency) {
+            sessionGroupHeading(s, c, recency);
+            group = recency;
+        }
         sessionRow(s, c, session, i);
         shown += 1;
     }
@@ -240,6 +299,17 @@ fn sessionList(s: *AppState, c: *ui.Context) void {
         defer empty.end();
         ui.text(c, "No matching chats", .{ .size = 12, .color = s.palette.faint });
     }
+}
+
+/// The heading over a run of conversations from the same stretch of time.
+fn sessionGroupHeading(s: *AppState, c: *ui.Context, recency: backend.Recency) void {
+    const row = ui.div(c).row().wFull().px(10).pt(10).pb(3);
+    defer row.end();
+    ui.text(c, recency.label(), .{
+        .size = 10.5,
+        .weight = .semibold,
+        .color = s.palette.faint,
+    });
 }
 
 fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usize) void {
@@ -282,10 +352,13 @@ fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usi
     if (it.clicked and !selected) s.select(index);
 }
 
-/// The palette picker, at the foot of the sidebar. The web client puts it in
-/// its status bar; here the status bar is the page header, which belongs to
-/// the page, so the sidebar's own foot is where a window-wide setting goes.
-fn themeSwitcher(s: *AppState, c: *ui.Context) void {
+/// The sidebar's foot: who you are, and the palette picker. The web client
+/// puts an account row here, so this is one too — the initials disc and the
+/// runtime's name on the left, opening the diagnostics panel, with the palette
+/// behind a single icon. The bare select that used to sit here read as a form
+/// control that had lost its label, in the one strip of the window that is a
+/// status bar rather than a form.
+fn sidebarFooter(s: *AppState, c: *ui.Context) void {
     _ = c.leaf(.{
         .width = .fill,
         .height = .{ .px = 1 },
@@ -294,20 +367,52 @@ fn themeSwitcher(s: *AppState, c: *ui.Context) void {
 
     const wrap = ui.div(c).row().wFull().p(10).gap(6).itemsCenter();
     defer wrap.end();
-    var picked: ?usize = @as(?usize, s.palette_index);
-    const names = comptime blk: {
-        var out: [theme.choices.len][]const u8 = undefined;
-        for (theme.choices, 0..) |choice, i| out[i] = choice.name;
-        break :blk out;
-    };
-    if (kit.select(c, "palette", &names, &picked, .{
-        .placeholder = "Theme…",
-        .width = sidebar_width - 20 - 34,
-    })) {
-        if (picked) |i| s.setPalette(i);
+
+    const row = ui.pressable(c, .{
+        .direction = .row,
+        .grow = 1,
+        .min_width = 0,
+        .gap = 8,
+        .align_items = .center,
+        .padding = .xy(6, 5),
+        .radius = 8,
+    }, s.palette.hover);
+    defer ui.end(c);
+    const disc = ui.div(c).w(24).h(24).roundedFull().bg(s.palette.accent).center();
+    defer disc.end();
+    ui.text(c, "N", .{ .size = 11, .weight = .semibold, .color = s.palette.accent_text });
+    const who = ui.div(c).column().grow().minW(0).gap(1);
+    defer who.end();
+    clipped(c, "nullclaw", .{ .size = 12, .color = s.palette.text, .truncate = .ellipsis });
+    ui.text(c, "local runtime", .{ .size = 10, .color = s.palette.faint });
+    if (row.clicked) s.diagnostics_open = true;
+
+    const palette = kit.iconButton(c, "circle.lefthalf.filled", .{ .size = .sm });
+    kit.tooltip(c, palette, "Palette", .{});
+    if (palette.clicked) {
+        s.theme_menu_open = !s.theme_menu_open;
+        c.changed = true;
     }
-    if (kit.iconButton(c, "info.circle", .{ .size = .sm }).clicked) {
-        s.diagnostics_open = true;
+    themeMenu(s, c, palette.rect);
+}
+
+/// The palette list, hung off the footer's palette button. A menu rather than
+/// a select: the choice is a window-wide setting, not a field of the page.
+fn themeMenu(s: *AppState, c: *ui.Context, anchor: ?ui.Rect) void {
+    var items: [theme.choices.len]kit.MenuItem = undefined;
+    for (theme.choices, 0..) |choice, i| {
+        items[i] = .{
+            .label = choice.name,
+            // The checkmark already says which one is on; a glyph repeated down
+            // every row would only add noise.
+            .checked = s.palette_index == i,
+        };
+    }
+    if (kit.menu(c, "theme-menu-popover", &s.theme_menu_open, anchor, &items, .{
+        .width = 180,
+        .placement = .top_start,
+    })) |picked| {
+        s.setPalette(picked);
     }
 }
 
@@ -739,8 +844,11 @@ fn composer(s: *AppState, c: *ui.Context) void {
 
     const foot = ui.div(c).row().wFull().gap(8).itemsCenter();
     defer foot.end();
-    composerHint(s, c);
+    // The model chip goes hard left, where the web client puts its model
+    // picker, with the keyboard hint at the right beside the send control.
+    modelChip(s, c);
     ui.spacer(c);
+    composerHint(s, c);
 
     if (s.sending) {
         const writing = ui.div(c).row().gap(6).itemsCenter();
@@ -776,6 +884,35 @@ fn composer(s: *AppState, c: *ui.Context) void {
     ui.icon(c, "arrow.up", .{ .size = 16, .color = if (can_send) s.palette.accent_text else s.palette.faint });
     if (send.clicked and can_send) s.send();
     _ = typed;
+}
+
+/// The model the next turn will use, as a chip at the composer's left, where
+/// the web client puts its model picker. It names a setting, so clicking it
+/// opens the page that sets it rather than a picker of its own; a config that
+/// names no model draws no chip rather than a guess.
+fn modelChip(s: *AppState, c: *ui.Context) void {
+    const full = s.modelLabel();
+    if (full.len == 0) return;
+    // The config names the model as `provider/model`; the chip shows the model
+    // the way the web client's picker does, and keeps the provider for the
+    // tooltip, which is where a name like "openrouter" belongs.
+    const model = if (std.mem.indexOfScalar(u8, full, '/')) |slash| full[slash + 1 ..] else full;
+    if (model.len == 0) return;
+    const it = ui.pressable(c, .{
+        .direction = .row,
+        .gap = 6,
+        .min_width = 0,
+        .max_width = 220,
+        .padding = .xy(9, 4),
+        .radius = 999,
+        .align_items = .center,
+        .background = s.palette.raised,
+    }, s.palette.hover);
+    defer ui.end(c);
+    ui.icon(c, "cpu", .{ .size = 11, .color = s.palette.faint });
+    clipped(c, model, .{ .size = 11, .color = s.palette.muted, .truncate = .ellipsis });
+    kit.tooltip(c, it, c.print("{s} · open Configuration", .{full}), .{});
+    if (it.clicked) s.openPage(.config);
 }
 
 fn composerHint(s: *AppState, c: *ui.Context) void {

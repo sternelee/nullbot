@@ -55,23 +55,26 @@ pub const Page = enum {
     }
 
     pub fn icon(self: Page) []const u8 {
+        // Every name here is one nanoui's own table can draw; a name it does
+        // not know is a missing-glyph box in the menu and the header. `every
+        // page wears an icon the toolkit can draw` holds the list to that.
         return switch (self) {
-            .chat => "bubble.left.and.bubble.right",
+            .chat => "text.cursor",
             .config => "gearshape",
-            .status => "gauge.medium",
+            .status => "gauge.with.dots.needle.33percent",
             .capabilities => "checklist",
             .models => "cpu",
             .memory => "brain",
             .skills => "sparkles",
-            .channels => "antenna.radiowaves.left.and.right",
-            .cron => "clock",
-            .mcp => "puzzlepiece.extension",
-            .auth => "key",
+            .channels => "network",
+            .cron => "arrow.clockwise",
+            .mcp => "wrench.and.screwdriver",
+            .auth => "lock",
             .workspace => "folder",
-            .hardware => "bolt.horizontal",
-            .service => "power",
-            .update => "arrow.down.circle",
-            .doctor => "stethoscope",
+            .hardware => "memorychip",
+            .service => "globe",
+            .update => "arrow.up",
+            .doctor => "waveform.path.ecg",
         };
     }
 
@@ -289,6 +292,12 @@ pub const AppState = struct {
     /// `Runtime.serveGateway`), so its life is the linked runtime's life.
     daemon_auto_started: bool = false,
 
+    /// The model the config names as its default, read once so the composer's
+    /// chip can name it without a frame ever parsing the file. Empty when
+    /// there is no config or it names no model, which hides the chip rather
+    /// than showing a guess.
+    default_model: []u8 = &.{},
+
     /// The palette the window is drawn in, and whether the switcher is open.
     palette_index: usize = 0,
     palette: theme.Palette = theme.choices[0].palette,
@@ -328,6 +337,7 @@ pub const AppState = struct {
             .turns = runtime.Turns.init(gpa),
         };
         self.loadTheme();
+        self.loadDefaultModel();
         // Auto-enable the bundled runtime on startup (best effort). Building
         // the linked runtime also brings the gateway up (see `ensureLinked`),
         // so the window serves HTTP from the first frame. Tests drive the
@@ -383,6 +393,7 @@ pub const AppState = struct {
         self.json_expanded.deinit(self.gpa);
         if (self.config) |*c| c.deinit();
         self.gpa.free(self.toast);
+        self.gpa.free(self.default_model);
         for (self.cfg_provider_options) |id| self.gpa.free(id);
         self.gpa.free(self.cfg_provider_options);
         self.gpa.free(self.exe);
@@ -659,6 +670,7 @@ pub const AppState = struct {
             };
         }
         self.selected = null;
+        sortSessions(self.sessions.items);
         if (keep_owned) |key| {
             for (self.sessions.items, 0..) |*session, i| {
                 if (std.mem.eql(u8, session.key, key)) {
@@ -667,6 +679,20 @@ pub const AppState = struct {
                 }
             }
         }
+    }
+
+    /// Newest conversation first, the way a chat client lists them: the one
+    /// just had belongs at the top. ISO-8601 stamps compare as text, so the
+    /// string order is the chronological order. A session the runtime could
+    /// not date (an empty stamp) sorts last rather than jumping the queue.
+    fn sortSessions(sessions: []backend.Session) void {
+        std.mem.sort(backend.Session, sessions, {}, struct {
+            fn newer(_: void, a: backend.Session, b: backend.Session) bool {
+                if (a.last_active.len == 0) return false;
+                if (b.last_active.len == 0) return true;
+                return std.mem.order(u8, a.last_active, b.last_active) == .gt;
+            }
+        }.newer);
     }
 
     fn clearSessions(self: *AppState) void {
@@ -1116,6 +1142,9 @@ pub const AppState = struct {
         self.config_dirty = false;
         self.syncFormFromConfig();
         self.showConfigDoc();
+        // The chip names what the config now says, not what it said when the
+        // window opened.
+        self.loadDefaultModel();
         // Validation is a pure check on the loaded config; a rejection is
         // shown as the page's complaint rather than a spawned command's
         // stderr.
@@ -1419,6 +1448,7 @@ pub const AppState = struct {
         };
         self.config_dirty = false;
         self.say("configuration saved");
+        self.loadDefaultModel();
         // The file is validated in-process: the same Config the runtime
         // builds from disk is checked here, so a save is confirmed against
         // what the gateway will read when it restarts, without spawning a
@@ -1626,6 +1656,26 @@ pub const AppState = struct {
                 return;
             }
         }
+    }
+
+    /// Reads the default model out of the config file, so the composer can
+    /// name it. One read at startup and one per save, not one per frame: the
+    /// chip is drawn on every frame the chat is open.
+    fn loadDefaultModel(self: *AppState) void {
+        self.gpa.free(self.default_model);
+        self.default_model = &.{};
+        var doc = backend.ConfigDoc.load(self.gpa, self.io, self.paths.config) catch return;
+        defer doc.deinit();
+        const primary = doc.get("agents.defaults.model.primary") orelse return;
+        const model = std.mem.trim(u8, primary, " \t\r\n");
+        if (model.len == 0) return;
+        self.default_model = self.gpa.dupe(u8, model) catch &.{};
+    }
+
+    /// The model the composer's chip names. Empty when the config names none,
+    /// which is the chip's cue to stay out of the way.
+    pub fn modelLabel(self: *const AppState) []const u8 {
+        return self.default_model;
     }
 
     fn saveTheme(self: *AppState) void {

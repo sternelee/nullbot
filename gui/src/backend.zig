@@ -1212,6 +1212,70 @@ pub fn formatStamp(a: std.mem.Allocator, stamp: []const u8) []const u8 {
     return if (line.len > 24) line[0..24] else line;
 }
 
+/// The day a stamp falls on, counted in days since 1970-01-01, or null when
+/// the stamp does not open with a date. Only the first ten characters are
+/// read: the sidebar groups conversations by day, so the clock time in an
+/// ISO stamp (`2026-05-30T14:09:02Z`) is of no use here.
+pub fn stampDay(stamp: []const u8) ?i64 {
+    if (stamp.len < 10) return null;
+    if (stamp[4] != '-' or stamp[7] != '-') return null;
+    const year = std.fmt.parseInt(i64, stamp[0..4], 10) catch return null;
+    const month = std.fmt.parseInt(i64, stamp[5..7], 10) catch return null;
+    const day = std.fmt.parseInt(i64, stamp[8..10], 10) catch return null;
+    if (month < 1 or month > 12) return null;
+    if (day < 1 or day > 31) return null;
+    return daysFromCivil(year, month, day);
+}
+
+/// Howard Hinnant's `days_from_civil`: days from 1970-01-01 to `y-m-d`. Exact
+/// for every proleptic Gregorian date; the era arithmetic is what keeps it
+/// branch-free for negative (pre-1970) years.
+fn daysFromCivil(y: i64, m: i64, d: i64) i64 {
+    const yy = if (m <= 2) y - 1 else y;
+    const era = @divFloor(if (yy >= 0) yy else yy - 399, 400);
+    const yoe = yy - era * 400;
+    const mp = if (m > 2) m - 3 else m + 9;
+    const doy = @divFloor(153 * mp + 2, 5) + d - 1;
+    const doe = yoe * 365 + @divFloor(yoe, 4) - @divFloor(yoe, 100) + doy;
+    return era * 146097 + doe - 719468;
+}
+
+/// Today, in the same day numbers `stampDay` returns.
+pub fn todayDay(io: Io) i64 {
+    const secs = std.Io.Clock.Timestamp.now(io, .real).raw.toSeconds();
+    return @divTrunc(secs, std.time.s_per_day);
+}
+
+/// The recency group the sidebar files a conversation under.
+pub const Recency = enum {
+    today,
+    yesterday,
+    week,
+    older,
+
+    pub fn label(self: Recency) []const u8 {
+        return switch (self) {
+            .today => "Today",
+            .yesterday => "Yesterday",
+            .week => "Previous 7 days",
+            .older => "Older",
+        };
+    }
+};
+
+/// Which group `stamp` belongs to, given today's day number. A stamp in the
+/// future (a runtime clock running ahead) reads as today rather than as a
+/// group of its own, and a stamp that is not a date at all is the oldest
+/// thing there is.
+pub fn recencyOf(stamp: []const u8, today: i64) Recency {
+    const day = stampDay(stamp) orelse return .older;
+    const age = today - day;
+    if (age <= 0) return .today;
+    if (age == 1) return .yesterday;
+    if (age <= 7) return .week;
+    return .older;
+}
+
 // --------------------------------------------------------------------- tests
 
 const testing = std.testing;
@@ -1220,6 +1284,27 @@ fn testEnv() std.process.Environ.Map {
     var map = std.process.Environ.Map.init(testing.allocator);
     map.put("HOME", "/home/user") catch unreachable;
     return map;
+}
+
+test "a stamp's day is the date it opens with" {
+    // 2026-05-30 is 20603 days after 1970-01-01; the epoch itself is day 0.
+    try testing.expectEqual(@as(?i64, 20603), stampDay("2026-05-30T14:09:02Z"));
+    try testing.expectEqual(@as(?i64, 0), stampDay("1970-01-01"));
+    try testing.expectEqual(@as(?i64, null), stampDay(""));
+    try testing.expectEqual(@as(?i64, null), stampDay("just now"));
+    try testing.expectEqual(@as(?i64, null), stampDay("2026/05/30T00:00:00Z"));
+}
+
+test "a day one apart is yesterday, and a week is the week" {
+    const today = stampDay("2026-05-30T09:00:00Z").?;
+    try testing.expectEqual(Recency.today, recencyOf("2026-05-30T23:59:59Z", today));
+    try testing.expectEqual(Recency.yesterday, recencyOf("2026-05-29T00:00:00Z", today));
+    try testing.expectEqual(Recency.week, recencyOf("2026-05-24T12:00:00Z", today));
+    try testing.expectEqual(Recency.older, recencyOf("2026-05-22T12:00:00Z", today));
+    // A stamp the runtime dated in the future is today, not a fifth group.
+    try testing.expectEqual(Recency.today, recencyOf("2026-06-02T00:00:00Z", today));
+    // No date to compare means no place to put it but the end of the list.
+    try testing.expectEqual(Recency.older, recencyOf("", today));
 }
 
 test "paths come from the environment" {
