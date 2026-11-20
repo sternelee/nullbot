@@ -61,13 +61,10 @@ test "screenshots" {
     w.app.theme_menu_open = false;
     w.tester.settle(0.2);
 
-    // The settings button pressed: the sidebar swaps its conversation list for
-    // the settings menu, grouped by what each page changes.
-    w.app.toggleSettings();
-    w.settle(1);
-    try shoot(&w, "01d-settings-menu");
-    w.app.openPage(.chat);
-    w.settle(0.5);
+    // The settings menu is no longer a shot of its own: `openPage` swaps the
+    // sidebar to it for every page but chat, so it is in every settings-page
+    // shot below (see `03-config`). A dedicated one would be a byte-identical
+    // copy.
 
     // A conversation: the transcript comes back from the runtime, and the
     // markdown the model writes is drawn as text rather than asterisks.

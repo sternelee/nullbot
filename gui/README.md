@@ -67,12 +67,11 @@ the app runs:
 | `01-chat-empty.png` | A new conversation, with the opening suggestions |
 | `01b-brand-menu.png` | The "nullclaw ⌄" menu: every non-chat page, including Configuration |
 | `01c-theme-menu.png` | The palette menu hung off the footer's palette button |
-| `01d-settings-menu.png` | The settings menu: the sidebar swapped from chats to every settings page, grouped Workspace / Runtime / System |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
-| `03-config.png` | The configuration page: runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
+| `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
-| `05-expanded.png` | The same page with every key opened |
-| `06-complaint.png` | The same page when the runtime answers nothing: its complaint is on the page |
+| `05-expanded.png` | The Status page's JSON tree with every key opened |
+| `06-complaint.png` | A page when the runtime answers nothing: its complaint is on the page |
 | `07-diagnostics.png` | The diagnostics panel over the chat: runtime, paths, session, theme |
 | `08-capabilities.png` | Capabilities as a list: channels, memory engines and tools, each with its state |
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
@@ -88,16 +87,15 @@ empty.
 ## The layout
 
 - **Rail** (the 52pt strip at the far left): a new chat, then the three page
-  destinations — Chat, Workspace and Settings — with the account badge at the
-  foot, which opens the diagnostics panel. The page you are on keeps its button
-  lit.
+  destinations — Chat, Workspace and Settings. The page you are on keeps its
+  button lit.
 - **Sidebar**: the conversation list by default — the "nullclaw ⌄" brand menu
   (every non-chat page, including the configuration editor), a search field, the
   session list grouped under the day each last spoke, and the footer with the
   account row and the palette switcher. Pressing the rail's Settings button
   swaps this for the **settings menu**: a header with a back button, then every
-  settings page grouped Workspace / Runtime / System. The two never show at
-  once, and opening a settings page or the conversation keeps them in step.
+  settings page grouped Workspace / Runtime / System. Opening a settings page
+  shows the menu; opening the conversation shows the list.
 - **Body**: a header with the page title and the chat / work mode tabs, the
   page itself, and a banner for the current toast.
 
