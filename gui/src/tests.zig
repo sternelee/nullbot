@@ -29,7 +29,7 @@ test "the window draws its shell, sidebar and composer" {
     try testing.expect(w.tester.containsText("nullclaw"));
     try testing.expect(w.tester.hasText("Sessions"));
     try testing.expect(w.tester.hasText("No sessions yet"));
-    try testing.expect(w.tester.hasText("What can I help with?"));
+    try testing.expect(w.tester.hasText("Where should we start?"));
 }
 
 test "the brand menu reaches the configuration page" {
@@ -201,6 +201,37 @@ test "the rail's destinations are distinct and real" {
     // rest are places.
     try testing.expectEqual(@as(usize, 1), new_chat);
     try testing.expectEqual(@as(usize, 1), settings);
+}
+
+test "the config page opens at its top after a scrolled transcript" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // Fill the transcript so its scroller is at the end. Its scroller and the
+    // config page's scroller are both the first child of the body column, so
+    // without a stable key the two resolve to the same nanoui id and the
+    // transcript's follow-to-end offset opens the config page scrolled past
+    // its first section.
+    var i: usize = 0;
+    while (i < 40) : (i += 1) {
+        w.app.pushMessage("user", "a long question that wraps across the column width");
+        w.app.pushMessage("assistant", "a long answer that also wraps across the column width");
+    }
+    w.tester.settle(0.4);
+    try testing.expect(w.tester.hasText("a long answer that also wraps across the column width"));
+
+    w.app.openPage(.config);
+    w.tester.settle(0.5);
+
+    // The first card is on screen, near the top: the page did not inherit the
+    // transcript's offset. `findText` returns a node's rect even when it is
+    // scrolled off the top (a negative y), so the assertion must require the
+    // card to be visible as well as near the top.
+    const card = w.tester.findText("Built-in nullclaw runtime") orelse return error.NoRuntimeCard;
+    try testing.expect(card.y > 0);
+    try testing.expect(card.y < 220);
+    try testing.expect(w.tester.hasText("Provider"));
 }
 
 // The settings menu is a second sidebar, so it has to hold every settings page

@@ -65,9 +65,6 @@ fn rail(s: *AppState, c: *ui.Context) void {
     defer bar.end();
 
     for (rail_entries) |entry| railButton(s, c, entry);
-
-    ui.spacer(c);
-    railAccount(s, c);
 }
 
 /// What a rail button does: open a page, start a conversation, or open the
@@ -126,22 +123,6 @@ fn railButton(s: *AppState, c: *ui.Context, entry: RailEntry) void {
     }
 }
 
-/// The account badge at the strip's foot, and the way into diagnostics.
-fn railAccount(s: *AppState, c: *ui.Context) void {
-    const it = ui.pressable(c, .{
-        .width = .{ .px = 28 },
-        .height = .{ .px = 28 },
-        .radius = 14,
-        .justify = .center,
-        .align_items = .center,
-        .background = s.palette.accent,
-    }, s.palette.hover);
-    defer ui.end(c);
-    ui.text(c, "N", .{ .size = 12, .weight = .semibold, .color = s.palette.accent_text });
-    kit.tooltip(c, it, "Diagnostics", .{});
-    if (it.clicked) s.diagnostics_open = true;
-}
-
 // --- the sidebar ---------------------------------------------------------
 
 fn sidebar(s: *AppState, c: *ui.Context) void {
@@ -164,6 +145,7 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
 /// way the web client swaps the sidebar when you open Settings.
 fn settingsSidebar(s: *AppState, c: *ui.Context) void {
     settingsHeader(s, c);
+    ui.key(c, "settings-scroll");
     const box = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
     defer box.end();
     for (state.settings_groups) |group| {
@@ -352,6 +334,7 @@ fn matchesSearch(s: *AppState, key: []const u8) bool {
 }
 
 fn sessionList(s: *AppState, c: *ui.Context) void {
+    ui.key(c, "sessions-scroll");
     const list = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
     defer list.end();
 
@@ -621,14 +604,14 @@ fn modeTabs(s: *AppState, c: *ui.Context) void {
     const tabs = ui.div(c).row().gap(2).p(3).roundedFull().bg(s.palette.raised);
     defer tabs.end();
     const in_chat = s.page == .chat;
-    if (ui.button(c, "聊天", .{
+    if (ui.button(c, "Chat", .{
         .variant = if (in_chat) .secondary else .ghost,
         .size = 12,
     }).clicked) {
         s.active_tab = .chat;
         s.openPage(.chat);
     }
-    if (ui.button(c, "工作", .{
+    if (ui.button(c, "Work", .{
         .variant = if (!in_chat) .secondary else .ghost,
         .size = 12,
     }).clicked) {
@@ -675,7 +658,7 @@ fn chat(s: *AppState, c: *ui.Context) void {
 fn disclaimer(s: *AppState, c: *ui.Context) void {
     const row = ui.div(c).row().wFull().justifyCenter().pb(10);
     defer row.end();
-    ui.text(c, "nullclaw 可能会出错。工作空间数据不会用于训练模型。", .{
+    ui.text(c, "nullclaw can make mistakes. Workspace data is not used to train models.", .{
         .size = 10.5,
         .color = s.palette.faint,
     });
@@ -691,15 +674,10 @@ fn emptyChat(s: *AppState, c: *ui.Context) void {
     const inner = ui.div(c).column().wFull().maxW(content_max).center().gap(20);
     defer inner.end();
 
-    ui.text(c, "我们从哪里开始?", .{
+    ui.text(c, "Where should we start?", .{
         .size = 28,
         .weight = .semibold,
         .color = s.palette.text,
-    });
-    // Kept as the accessible, testable description of the empty state.
-    ui.text(c, "What can I help with?", .{
-        .size = 1,
-        .color = s.palette.bg,
     });
 
     // The composer sits directly under the question, then the suggestions.
@@ -730,6 +708,12 @@ fn suggestionRow(s: *AppState, c: *ui.Context, prompt: []const u8) void {
 }
 
 fn transcript(s: *AppState, c: *ui.Context) void {
+    // A stable key keeps this box's scroll offset its own. Without one the
+    // transcript and the configuration page's scroller — both the first child
+    // of the body column — resolve to the same id, so the transcript's
+    // follow-to-end offset carried into the config page and opened it scrolled
+    // past its first section.
+    ui.key(c, "transcript-scroll");
     const box = ui.div(c).column().grow().minW(0).wFull().scrollY().px(22).py(18);
     // The newest turn is the one you want to read.
     box.c.node(box.index).style.follow_end = true;
@@ -1176,6 +1160,7 @@ fn jsonRow(s: *AppState, c: *ui.Context, line: backend.JsonLine) void {
 /// can say more than the tree can — which channel is configured, which memory
 /// engine is active, which tool the runtime loaded.
 fn rowsView(s: *AppState, c: *ui.Context, rows: *backend.Rows) void {
+    ui.key(c, "rows-scroll");
     const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip().gap(14);
     defer scroller.end();
 
@@ -1308,7 +1293,11 @@ fn configPage(s: *AppState, c: *ui.Context) void {
     {
         // `clip` as well as `scrollY`: a scrolling box does not cut its
         // content by itself, so the form ran on over the pinned bar and drew
-        // through it.
+        // through it. Keyed so its offset is its own: it shares a structural
+        // position with the transcript's scroller, and without the key the two
+        // resolve to the same id and the transcript's follow-to-end offset
+        // opened this page past its first section.
+        ui.key(c, "config-scroll");
         const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip();
         defer scroller.end();
         const page = ui.div(c).column().wFull().maxW(content_max).gap(16).pb(16);
