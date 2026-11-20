@@ -55,10 +55,10 @@ pub fn root(s: *AppState, c: *ui.Context) void {
 }
 
 /// The hairline icon strip at the far left, as the web client has it: a new
-/// chat, the conversation, the workspace, and the configuration, with the
-/// account badge at the foot. Every button is a place you can actually get
-/// to — the strip used to carry four icons over two pages, so half of it did
-/// nothing the other half had not already done.
+/// chat, the conversation, the workspace, and Settings, which swaps the sidebar
+/// to the settings menu. Every button is a place you can actually get to — the
+/// strip used to carry four icons over two pages, so half of it did nothing the
+/// other half had not already done.
 fn rail(s: *AppState, c: *ui.Context) void {
     const bar = ui.div(c).column().w(rail_width).hFull().bg(s.palette.shell)
         .itemsCenter().py(12).gap(6);
@@ -145,12 +145,19 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
 /// way the web client swaps the sidebar when you open Settings.
 fn settingsSidebar(s: *AppState, c: *ui.Context) void {
     settingsHeader(s, c);
-    ui.key(c, "settings-scroll");
-    const box = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
-    defer box.end();
-    for (state.settings_groups) |group| {
-        settingsGroupHeading(s, c, group.title);
-        for (group.pages) |page| settingsRow(s, c, page);
+    // The scroller is closed before the footer is drawn. A `defer` here would
+    // leave it open for the rest of the function, so the footer — the account
+    // row and the palette switcher — would be a child of the scrolling box and
+    // scroll away with the list, leaving it off-screen on a short window. The
+    // conversation sidebar pins its footer the same way.
+    {
+        ui.key(c, "settings-scroll");
+        const box = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
+        defer box.end();
+        for (state.settings_groups) |group| {
+            settingsGroupHeading(s, c, group.title);
+            for (group.pages) |page| settingsRow(s, c, page);
+        }
     }
     sidebarFooter(s, c);
 }

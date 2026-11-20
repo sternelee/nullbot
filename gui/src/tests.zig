@@ -84,6 +84,31 @@ test "the settings button swaps the sidebar to the settings menu" {
     try testing.expectEqual(state.Page.chat, w.app.page);
 }
 
+// Regression: the settings sidebar drew its footer (the account row and the
+// palette switcher) inside the scrolling box, so on a window too short for
+// every settings page the footer scrolled off the bottom with the list. The
+// conversation sidebar pins its footer; this holds the settings sidebar to the
+// same rule.
+test "the settings sidebar keeps its footer pinned on a short window" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.tester.resize(1180, 420);
+    w.tester.settle(0.4);
+    w.app.toggleSettings();
+    w.tester.settle(0.5);
+
+    // The footer is on screen, at the foot: before the fix it sat at y=666 on
+    // this window, well past the 420px bottom. It need not be a pixel inside
+    // the edge — the row carries bottom padding — only near it.
+    const foot = w.tester.findText("local runtime") orelse return error.NoFooter;
+    try testing.expect(foot.y > 0);
+    try testing.expect(foot.y > w.tester.size.h - 60);
+    try testing.expect(foot.y < w.tester.size.h);
+    try testing.expect(w.tester.hasText("Doctor"));
+}
+
 // Starting a conversation leaves the settings menu: it belongs to the sidebar's
 // conversation list, which is what the sidebar has to be showing again.
 test "a new chat leaves the settings menu" {
