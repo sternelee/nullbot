@@ -1,9 +1,11 @@
 //! Checks the GUI's pages against the runtime's own CLI surface.
 //!
-//! The GUI and the runtime are separate binaries — the GUI drives `nullclaw`
-//! as a child process — so nothing but this test keeps their command names
-//! aligned. If the runtime
-//! renames or drops a command, this fails here instead of in a toast.
+//! The GUI links the runtime and answers most pages from it in process, but
+//! the runtime's command names and JSON shapes still have to stay aligned
+//! with what the pages and their readers expect — a handful of pages still
+//! spawn a process, and the in-process answers reuse the runtime's own
+//! emitters. This test reads the runtime's source and fails here, not in a
+//! toast, if a command is renamed or dropped or a JSON key moves.
 const std = @import("std");
 const testing = std.testing;
 

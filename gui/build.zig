@@ -4,15 +4,18 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // nanoui draws the window; the `nullclaw` runtime is driven as a child
-    // process (see src/runtime.zig) so the GUI never links the runtime.
+    // nanoui draws the window; the `nullclaw` runtime is linked in as a
+    // module (see src/runtime.zig) so the window is one self-contained binary
+    // with no runtime to install beside it.
     const nanoui = b.dependency("nanoui", .{ .target = target, .optimize = optimize }).module("nanoui");
 
     const options = b.addOptions();
     options.addOption([]const u8, "version", b.option([]const u8, "version", "nullclaw-gui's version") orelse "0.1.0");
 
     // The runtime as a module: the window links nullclaw's own library and
-    // calls into it, rather than spawning a program.
+    // calls into it for chat, the gateway and most data pages, rather than
+    // spawning a program. The three pages that still shell out (hardware,
+    // service, update) look for a `nullclaw` on disk at runtime.
     const runtime_dep = b.dependency("nullclaw", .{
         .target = target,
         .optimize = optimize,

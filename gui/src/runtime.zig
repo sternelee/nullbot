@@ -1,9 +1,11 @@
-//! Running `nullclaw` without freezing the window.
+//! Running a command or a turn without freezing the window.
 //!
-//! A turn can take many seconds, so every command runs on its own thread and
-//! the view collects the finished ones at the top of a frame (`pump`). The
-//! executor owns the command line, the output, and the thread; a handler sees
-//! them for the length of one call and must copy what it wants to keep.
+//! A turn can take many seconds, so it runs on its own thread and the view
+//! collects the finished ones at the top of a frame (`pump`). Two things run
+//! this way: in-process turns against the linked runtime (`Turns`, a function
+//! call rather than a subprocess) and the few page commands that still spawn a
+//! process (`Executor`). Either way the work owns its own thread; a handler
+//! sees the result for the length of one call and must copy what it keeps.
 const std = @import("std");
 const yc = @import("nullclaw");
 const Io = std.Io;
@@ -388,6 +390,12 @@ test "a handler may submit the next command" {
 }
 
 /// A long-lived `nullclaw gateway` process managed by the GUI.
+///
+/// Superseded by the linked runtime: the window now serves its gateway from
+/// `runtime_builder.Runtime` (see `AppState.ensureDaemonRunning`), so nothing
+/// constructs this any more. It is kept because it still works — it spawns
+/// and reaps a real child — and is the shape to reach for if a future page
+/// has to manage a separate server process.
 ///
 /// The gateway owns its own stdout/stderr (inherited by default through the
 /// child pipes we drain in a watcher thread) and runs until stopped. `poll`

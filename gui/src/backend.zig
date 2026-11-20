@@ -1,9 +1,12 @@
 //! Everything the GUI knows about the NullClaw runtime: where its files live,
 //! which commands to run, and how to read the JSON they print.
 //!
-//! The GUI does not link NullClaw; instead this module describes the
-//! command line the GUI drives as a child process and the shapes it parses
-//! back. Keeping all of that here means it is testable without a window.
+//! The window links the runtime (src/runtime.zig), so chat, the gateway and
+//! most data pages never touch this module. What is left is the runtime's
+//! on-disk layout (`~/.nullclaw`), the command line for the few pages that
+//! still spawn a process (hardware, service, update), the `--json` argv
+//! builders, and the readers for the JSON shapes those answers use. Keeping
+//! all of that here means it is testable without a window.
 const std = @import("std");
 const Io = std.Io;
 
@@ -17,10 +20,12 @@ pub const bin_env = "NULLCLAW_BIN";
 /// Where the window's runtime comes from, in the order it looks:
 ///
 /// 1. `$NULLCLAW_BIN`, for a stub or a checkout build.
-/// 2. The runtime embedded in this binary, written out to the cache on first
-///    use. A single `nullclaw-gui` is then a working window.
-/// 3. A `nullclaw` beside the window, for a build made without the embed.
-/// 4. `PATH`, for a runtime installed by other means.
+/// 2. A `nullclaw` beside the window binary, for a bundled build.
+/// 3. `PATH`, for a runtime installed by other means.
+///
+/// This is only used for the three pages that still spawn a process
+/// (hardware, service, update); chat, the gateway and the other data pages go
+/// through the linked runtime and need no binary on disk.
 ///
 /// The returned slice is owned by the caller.
 pub fn executable(

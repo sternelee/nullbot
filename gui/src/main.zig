@@ -1,9 +1,10 @@
 //! nullclaw-gui: a desktop front end for NullClaw, built on nanoui.
 //!
-//! This app owns the window and drives the `nullclaw` runtime as a
-//! child process (`nullclaw history …`, `nullclaw agent invoke …`,
-//! `nullclaw config …`) and reads `~/.nullclaw/config.json` directly. See
-//! src/runtime.zig for the executor and src/backend.zig for the command line.
+//! This app owns the window and links the `nullclaw` runtime as a module
+//! (see src/runtime.zig): a chat turn is a function call, the gateway is
+//! served from the linked runtime, and most data pages are answered from it
+//! in process. The three pages that still shell out (hardware, service,
+//! update) and the config file read in src/backend.zig are the exceptions.
 const std = @import("std");
 const nanoui = @import("nanoui");
 const ui = nanoui.ui;
