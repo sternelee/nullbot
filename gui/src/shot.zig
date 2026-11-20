@@ -135,8 +135,12 @@ test "screenshots" {
     w.settle(1);
     try shoot(&w, "09-empty");
 
-    // The same page with every key opened, which is what clicking a summary row
+    // A page whose answer the runtime builds in-process, drawn as a foldable
+    // tree. Status is the one page that still shows the raw JSON tree rather
+    // than rows; every key is opened, which is what clicking a summary row
     // does.
+    w.app.openPage(.status);
+    w.settle(1);
     w.app.expandAll();
     w.tester.settle(0.5);
     try shoot(&w, "05-expanded");
