@@ -70,11 +70,16 @@ fn rail(s: *AppState, c: *ui.Context) void {
     railAccount(s, c);
 }
 
-/// What a rail button does: open a page, or start a conversation. Only the
-/// new-chat button is the latter, which is why the strip is not a page list.
+/// What a rail button does: open a page, start a conversation, or open the
+/// settings menu. Only the new-chat button starts a conversation, which is why
+/// the strip is not a page list.
 pub const RailTarget = union(enum) {
     new_chat,
     page: Page,
+    /// Swaps the sidebar to the settings menu. Its own target rather than
+    /// `.{ .page = .config }` so the button toggles the menu (and lights while
+    /// it is open) instead of merely landing on the configuration page.
+    settings,
 };
 
 const RailEntry = struct {
@@ -92,15 +97,17 @@ pub const rail_entries = [_]RailEntry{
     .{ .icon = "square.and.pencil", .label = "New chat", .target = .new_chat },
     .{ .icon = "text.cursor", .label = "Chat", .target = .{ .page = .chat } },
     .{ .icon = "folder", .label = "Workspace", .target = .{ .page = .workspace } },
-    .{ .icon = "gearshape", .label = "Configuration", .target = .{ .page = .config } },
+    .{ .icon = "gearshape", .label = "Settings", .target = .settings },
 };
 
 fn railButton(s: *AppState, c: *ui.Context, entry: RailEntry) void {
     // The page you are on keeps its button lit, so the strip says where you
-    // are rather than only where you could go.
+    // are rather than only where you could go. The settings button lights
+    // while its menu is open, which is the state it is the entry to.
     const active = switch (entry.target) {
         .new_chat => false,
-        .page => |page| s.page == page,
+        .page => |page| s.page == page and !s.settings_open,
+        .settings => s.settings_open,
     };
     const it = ui.button(c, "", .{
         .variant = if (active) .secondary else .ghost,
@@ -115,6 +122,7 @@ fn railButton(s: *AppState, c: *ui.Context, entry: RailEntry) void {
     switch (entry.target) {
         .new_chat => s.newChat(),
         .page => |page| s.openPage(page),
+        .settings => s.toggleSettings(),
     }
 }
 
@@ -139,11 +147,89 @@ fn railAccount(s: *AppState, c: *ui.Context) void {
 fn sidebar(s: *AppState, c: *ui.Context) void {
     const bar = ui.div(c).column().w(sidebar_width).hFull().bg(s.palette.shell);
     defer bar.end();
+    if (s.settings_open) {
+        settingsSidebar(s, c);
+        return;
+    }
     brand(s, c);
     sessionSearch(s, c);
     sessionsHeading(s, c);
     sessionList(s, c);
     sidebarFooter(s, c);
+}
+
+/// The sidebar while the settings menu is open: a header that says so and a way
+/// back to the conversation, then the settings pages grouped by what they
+/// change. It replaces the conversation list rather than sitting beside it, the
+/// way the web client swaps the sidebar when you open Settings.
+fn settingsSidebar(s: *AppState, c: *ui.Context) void {
+    settingsHeader(s, c);
+    const box = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
+    defer box.end();
+    for (state.settings_groups) |group| {
+        settingsGroupHeading(s, c, group.title);
+        for (group.pages) |page| settingsRow(s, c, page);
+    }
+    sidebarFooter(s, c);
+}
+
+/// The menu's header: a back button to the conversation, and the word that says
+/// what this list is. Without the back control the only way out is to guess that
+/// the rail's chat button does it.
+fn settingsHeader(s: *AppState, c: *ui.Context) void {
+    const row = ui.div(c).row().wFull().px(10).pt(12).pb(10).gap(8).itemsCenter();
+    defer row.end();
+    // A labelled button rather than a bare chevron: an arrow on its own is a
+    // guess, and the label is what a reader can act on.
+    const back = ui.button(c, "Back", .{
+        .variant = .ghost,
+        .icon = "chevron.left",
+        .size = 12.5,
+    });
+    if (back.clicked) s.openPage(.chat);
+    ui.text(c, "Settings", .{ .size = 14, .weight = .semibold, .color = s.palette.text });
+}
+
+/// One group's heading, in the same quiet style as the session list's day
+/// headings so the two sidebars read as one design.
+fn settingsGroupHeading(s: *AppState, c: *ui.Context, title: []const u8) void {
+    const row = ui.div(c).row().wFull().px(10).pt(12).pb(3);
+    defer row.end();
+    ui.text(c, title, .{
+        .size = 10.5,
+        .weight = .semibold,
+        .color = s.palette.faint,
+        .tracking = 0.8,
+    });
+}
+
+/// One settings entry: an icon, the page's label, and a lit row when it is the
+/// page on screen.
+fn settingsRow(s: *AppState, c: *ui.Context, page: Page) void {
+    const active = s.page == page;
+    const it = ui.pressable(c, .{
+        .direction = .row,
+        .width = .fill,
+        .gap = 10,
+        .align_items = .center,
+        .padding = .xy(10, 7),
+        .radius = 7,
+        .background = if (active) s.palette.raised else s.palette.shell,
+    }, s.palette.hover);
+    defer ui.end(c);
+
+    ui.icon(c, page.icon(), .{
+        .size = 13,
+        .frame = 16,
+        .color = if (active) s.palette.accent else s.palette.muted,
+    });
+    ui.text(c, page.label(), .{
+        .size = 12.5,
+        .weight = if (active) .medium else .regular,
+        .color = if (active) s.palette.text else s.palette.muted,
+    });
+
+    if (it.clicked) s.openPage(page);
 }
 
 /// The window's identity and the entry to every non-chat page. The web client

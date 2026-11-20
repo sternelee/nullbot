@@ -127,6 +127,24 @@ pub const nav = [_]Page{
     .hardware, .service,  .update, .doctor,
 };
 
+/// A heading and the pages under it in the settings menu. When the settings
+/// button is pressed the sidebar swaps its conversation list for this menu, so
+/// the settings read as a section of the window rather than as a popover hung
+/// off a single button.
+pub const SettingsGroup = struct {
+    title: []const u8,
+    pages: []const Page,
+};
+
+/// The settings menu, grouped the way the runtime itself thinks about them.
+/// Every page but chat appears here exactly once; a test holds it to that, so a
+/// new page cannot be added to `nav` and quietly left out of the menu.
+pub const settings_groups = [_]SettingsGroup{
+    .{ .title = "Workspace", .pages = &.{ .config, .workspace, .skills, .memory } },
+    .{ .title = "Runtime", .pages = &.{ .models, .capabilities, .channels, .mcp, .cron, .status } },
+    .{ .title = "System", .pages = &.{ .auth, .hardware, .service, .update, .doctor } },
+};
+
 /// Provider ids nullclaw's provider factory knows. Shown in the
 /// configuration page's Provider select, in this order.
 pub const prov_ids = [_][]const u8{
@@ -308,6 +326,10 @@ pub const AppState = struct {
     /// The top-of-page mode switch. Chat is the conversation; Work is the
     /// runtime's tools. Work opens the first tool page when chosen.
     active_tab: enum { chat, work } = .chat,
+    /// True while the sidebar shows the settings menu instead of the
+    /// conversation list. The settings button on the rail turns it on, and
+    /// starting a chat turns it off.
+    settings_open: bool = false,
     /// The diagnostics panel the sidebar's footer opens.
     diagnostics_open: bool = false,
 
@@ -736,6 +758,9 @@ pub const AppState = struct {
     pub fn select(self: *AppState, index: usize) void {
         if (index >= self.sessions.items.len) return;
         self.selected = index;
+        // Choosing a conversation leaves the settings menu, the way picking a
+        // chat in the web client closes Settings.
+        self.settings_open = false;
         self.loadTranscript(self.sessions.items[index].key);
     }
 
@@ -870,7 +895,21 @@ pub const AppState = struct {
         self.clearMessages();
         self.composer.clear();
         self.page = .chat;
+        // Starting a conversation leaves the settings menu: it belongs to the
+        // conversation list, which is what the sidebar shows again.
+        self.settings_open = false;
         self.makeDraftSession();
+    }
+
+    /// Swaps the sidebar to the settings menu, or back. The settings button on
+    /// the rail calls this; opening a page keeps `settings_open` in step through
+    /// `openPage`, so the two never disagree.
+    pub fn toggleSettings(self: *AppState) void {
+        if (self.settings_open) {
+            self.openPage(.chat);
+        } else {
+            self.openPage(.config);
+        }
     }
 
     /// Names the conversation that has not been sent yet. The key is a
@@ -897,6 +936,11 @@ pub const AppState = struct {
     }
     pub fn openPage(self: *AppState, page: Page) void {
         self.page = page;
+        // The settings menu is what the sidebar shows for every page but the
+        // conversation, so opening a settings page swaps the sidebar to the
+        // menu and opening chat swaps it back. One rule keeps the rail, the
+        // brand menu and the mode tabs from disagreeing about where you are.
+        self.settings_open = page != .chat;
         // A toast belongs to the page that produced it: a configuration
         // error would otherwise linger for six seconds on every page the
         // user opens after it.

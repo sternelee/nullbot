@@ -49,6 +49,60 @@ test "the brand menu reaches the configuration page" {
     try testing.expect(!w.app.menu_open);
 }
 
+// The settings button swaps the sidebar to a menu of every settings page,
+// rather than just landing on the configuration page. Opening Settings shows
+// the conversation list's own heading gone and the menu's groups in its place,
+// and going back restores the chats.
+test "the settings button swaps the sidebar to the settings menu" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.tester.settle(0.5);
+    // The conversation sidebar is what is up before the button is pressed.
+    try testing.expect(w.tester.hasText("Search chats"));
+    try testing.expect(w.tester.hasText("Sessions"));
+
+    w.app.toggleSettings();
+    w.tester.settle(0.5);
+    // The menu is up, the conversation list is not, and the body follows the
+    // sidebar to the configuration page.
+    try testing.expect(w.app.settings_open);
+    try testing.expect(w.tester.hasText("Settings"));
+    try testing.expect(w.tester.hasText("Runtime"));
+    try testing.expect(w.tester.hasText("System"));
+    try testing.expect(w.tester.hasText("Channels"));
+    try testing.expect(!w.tester.hasText("Search chats"));
+    try testing.expect(!w.tester.hasText("Sessions"));
+    try testing.expectEqual(state.Page.config, w.app.page);
+
+    // The back button returns to the conversation.
+    try w.tester.clickText("Back");
+    w.tester.settle(0.5);
+    try testing.expect(!w.app.settings_open);
+    try testing.expect(w.tester.hasText("Search chats"));
+    try testing.expectEqual(state.Page.chat, w.app.page);
+}
+
+// Starting a conversation leaves the settings menu: it belongs to the sidebar's
+// conversation list, which is what the sidebar has to be showing again.
+test "a new chat leaves the settings menu" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.tester.settle(0.5);
+    w.app.openPage(.models);
+    w.tester.settle(0.3);
+    try testing.expect(w.app.settings_open);
+
+    w.app.newChat();
+    w.tester.settle(0.5);
+    try testing.expect(!w.app.settings_open);
+    try testing.expectEqual(state.Page.chat, w.app.page);
+    try testing.expect(w.tester.hasText("Search chats"));
+}
+
 test "every page names itself in the sidebar and the header" {
     var w: Window = undefined;
     try w.init();
@@ -126,11 +180,13 @@ test "sessions are grouped under the day they last spoke" {
 test "the rail's destinations are distinct and real" {
     var seen: [view.rail_entries.len]?state.Page = @splat(null);
     var new_chat: usize = 0;
+    var settings: usize = 0;
     for (view.rail_entries, 0..) |entry, i| {
         try testing.expect(entry.label.len > 0);
         try testing.expect(entry.icon.len > 0);
         switch (entry.target) {
             .new_chat => new_chat += 1,
+            .settings => settings += 1,
             .page => |page| {
                 for (seen[0..i]) |earlier| {
                     if (earlier != null and earlier.? == page) return error.DuplicateRailDestination;
@@ -141,8 +197,39 @@ test "the rail's destinations are distinct and real" {
             },
         }
     }
-    // Exactly one button starts a conversation; the rest are places.
+    // Exactly one button starts a conversation, one opens settings, and the
+    // rest are places.
     try testing.expectEqual(@as(usize, 1), new_chat);
+    try testing.expectEqual(@as(usize, 1), settings);
+}
+
+// The settings menu is a second sidebar, so it has to hold every settings page
+// and no duplicates. A page added to `nav` and forgotten here would be
+// unreachable once the sidebar swaps to the menu.
+test "the settings menu holds every page but chat exactly once" {
+    var seen: [state.nav.len]state.Page = undefined;
+    var n: usize = 0;
+    for (state.settings_groups) |group| {
+        try testing.expect(group.title.len > 0);
+        for (group.pages) |page| {
+            // Chat is the conversation, not a setting; it must not be in here.
+            try testing.expect(page != .chat);
+            for (seen[0..n]) |earlier| try testing.expect(earlier != page);
+            seen[n] = page;
+            n += 1;
+        }
+    }
+    try testing.expectEqual(state.nav.len - 1, n);
+    // And the menu's set is exactly `nav` minus chat, so no page is missing.
+    for (state.nav) |page| {
+        if (page == .chat) continue;
+        var found = false;
+        for (seen[0..n]) |p| if (p == page) {
+            found = true;
+            break;
+        };
+        try testing.expect(found);
+    }
 }
 
 test "a transcript draws markdown and retires the empty state" {

@@ -61,6 +61,14 @@ test "screenshots" {
     w.app.theme_menu_open = false;
     w.tester.settle(0.2);
 
+    // The settings button pressed: the sidebar swaps its conversation list for
+    // the settings menu, grouped by what each page changes.
+    w.app.toggleSettings();
+    w.settle(1);
+    try shoot(&w, "01d-settings-menu");
+    w.app.openPage(.chat);
+    w.settle(0.5);
+
     // A conversation: the transcript comes back from the runtime, and the
     // markdown the model writes is drawn as text rather than asterisks.
     w.app.refreshSessions();

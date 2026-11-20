@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 83 tests, headless
+zig build test       # 86 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -67,6 +67,7 @@ the app runs:
 | `01-chat-empty.png` | A new conversation, with the opening suggestions |
 | `01b-brand-menu.png` | The "nullclaw ⌄" menu: every non-chat page, including Configuration |
 | `01c-theme-menu.png` | The palette menu hung off the footer's palette button |
+| `01d-settings-menu.png` | The settings menu: the sidebar swapped from chats to every settings page, grouped Workspace / Runtime / System |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
 | `03-config.png` | The configuration page: runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
@@ -87,13 +88,16 @@ empty.
 ## The layout
 
 - **Rail** (the 52pt strip at the far left): a new chat, then the three page
-  destinations — Chat, Workspace and Configuration — with the account badge at
-  the foot, which opens the diagnostics panel. The page you are on keeps its
-  button lit.
-- **Sidebar**: the "nullclaw ⌄" brand menu (every non-chat page, including the
-  configuration editor, lives here so the sidebar stays a conversation list), a
-  search field, the session list grouped under the day each last spoke, and the
-  footer with the account row and the palette switcher.
+  destinations — Chat, Workspace and Settings — with the account badge at the
+  foot, which opens the diagnostics panel. The page you are on keeps its button
+  lit.
+- **Sidebar**: the conversation list by default — the "nullclaw ⌄" brand menu
+  (every non-chat page, including the configuration editor), a search field, the
+  session list grouped under the day each last spoke, and the footer with the
+  account row and the palette switcher. Pressing the rail's Settings button
+  swaps this for the **settings menu**: a header with a back button, then every
+  settings page grouped Workspace / Runtime / System. The two never show at
+  once, and opening a settings page or the conversation keeps them in step.
 - **Body**: a header with the page title and the chat / work mode tabs, the
   page itself, and a banner for the current toast.
 
