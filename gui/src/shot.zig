@@ -147,14 +147,16 @@ test "screenshots" {
     try shoot(&w, "07-diagnostics");
     w.app.diagnostics_open = false;
 
-    // The complaint path, with a runtime that answers nothing — the toast is the
-    // one the window really shows, not one typed into the state.
-    var path_buffer_2: [256]u8 = undefined;
-    const failing = try harness.writeFailingStub(io, &path_buffer_2);
+    // The complaint path. Every JSON page is answered in-process now, so a
+    // failing runtime no longer produces a complaint on its own; the page is
+    // shown the message the runtime would have printed, which is what
+    // `setJsonProblem` draws.
     var broken: harness.Window = undefined;
-    try broken.initWith(.{ .runtime = failing });
+    try broken.initWith(.{ .runtime = stub });
     defer broken.deinit();
     broken.app.openPage(.status);
     broken.settle(1);
+    broken.app.setJsonProblem("no answer for: status");
+    broken.tester.frame();
     try shoot(&broken, "06-complaint");
 }
