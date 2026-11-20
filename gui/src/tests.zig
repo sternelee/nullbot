@@ -1,5 +1,6 @@
 const std = @import("std");
 const testing = std.testing;
+const ui = @import("nanoui").ui;
 
 const state = @import("state.zig");
 const backend = @import("backend.zig");
@@ -778,4 +779,25 @@ test "an open session wins over the draft" {
     const chosen = w.app.turnSession() orelse return error.NoSession;
     try testing.expectEqualStrings("api:default", chosen);
     try testing.expect(!std.mem.eql(u8, draft, chosen));
+}
+
+// Regression: clicking the composer's model chip opens Configuration, which
+// reloads the config and replaces the very string the chip was drawn from.
+// nanoui measures a frame after the view returns, so freeing that string
+// mid-frame left the measure reading freed memory — a segfault against the
+// machine's own config.
+test "clicking the model chip survives the config it reloads" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    _ = try harness.writeConfig(w.threaded.io(), "{\"agents\":{\"defaults\":{\"model\":{\"primary\":\"openrouter/stub-model\"}}}}");
+    defer harness.removeConfig(w.threaded.io());
+    w.app.loadConfig();
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("stub-model"));
+
+    try w.tester.clickText("stub-model");
+    w.tester.settle(0.5);
+    try testing.expectEqual(state.Page.config, w.app.page);
 }

@@ -314,6 +314,12 @@ pub const AppState = struct {
     /// The last thing that happened, shown for a few seconds.
     toast: []u8 = &.{},
     toast_shown_at: f64 = -1,
+    /// Strings a frame has already drawn and a click handler has since
+    /// replaced. nanoui measures a frame after the view returns, so a string
+    /// freed mid-frame is read back — as garbage, or as a segfault once the
+    /// allocator hands the page back to the kernel. They are kept until the
+    /// next frame opens, when no node can still point at them.
+    retired: std.ArrayListUnmanaged([]u8) = .empty,
 
     /// The requests whose command has not come back yet. They are freed here
     /// on shutdown so a window closed mid-command leaks nothing.
@@ -392,6 +398,8 @@ pub const AppState = struct {
         self.clearExpanded();
         self.json_expanded.deinit(self.gpa);
         if (self.config) |*c| c.deinit();
+        self.releaseRetired();
+        self.retired.deinit(self.gpa);
         self.gpa.free(self.toast);
         self.gpa.free(self.default_model);
         for (self.cfg_provider_options) |id| self.gpa.free(id);
@@ -405,6 +413,9 @@ pub const AppState = struct {
 
     /// Folds finished commands in. Call once at the top of a frame.
     pub fn pump(self: *AppState) void {
+        // A frame that has been measured is finished with the strings it drew,
+        // so this is the first moment they can be freed.
+        self.releaseRetired();
         self.executor.pump();
         self.turns.pumpStreaming(self, onDelta, onTurnDone);
         // Keep the embedded runtime alive while the GUI is open.
@@ -586,7 +597,7 @@ pub const AppState = struct {
     // ---------------------------------------------------------------- toasts
 
     pub fn say(self: *AppState, text: []const u8) void {
-        self.gpa.free(self.toast);
+        self.retire(self.toast);
         self.toast = self.gpa.dupe(u8, text) catch &.{};
         self.toast_shown_at = -1;
     }
@@ -595,6 +606,22 @@ pub const AppState = struct {
         const text = std.fmt.allocPrint(self.gpa, fmt, args) catch return;
         defer self.gpa.free(text);
         self.say(text);
+    }
+
+    /// Keeps `bytes` alive until the next frame opens. Use this rather than
+    /// freeing anything a node drawn earlier in this frame may still point at.
+    fn retire(self: *AppState, bytes: []u8) void {
+        if (bytes.len == 0) return;
+        // A list that cannot grow leaves the string allocated, which is the
+        // safe failure: freeing it now is the thing being avoided.
+        self.retired.append(self.gpa, bytes) catch {};
+    }
+
+    /// Frees what earlier frames retired. Called once per frame, before
+    /// anything is drawn.
+    fn releaseRetired(self: *AppState) void {
+        for (self.retired.items) |bytes| self.gpa.free(bytes);
+        self.retired.clearRetainingCapacity();
     }
 
     /// Called by the view: stamps the toast with the frame clock the first
@@ -627,7 +654,7 @@ pub const AppState = struct {
     }
 
     pub fn dismissToast(self: *AppState) void {
-        self.gpa.free(self.toast);
+        self.retire(self.toast);
         self.toast = &.{};
         self.toast_shown_at = -1;
     }
@@ -696,7 +723,13 @@ pub const AppState = struct {
     }
 
     fn clearSessions(self: *AppState) void {
-        for (self.sessions.items) |*s| s.deinit(self.gpa);
+        // Retired, not freed: the sidebar drew its rows from these strings
+        // earlier in this frame, and the frame is measured after the view.
+        for (self.sessions.items) |*s| {
+            self.retire(s.key);
+            self.retire(s.created_at);
+            self.retire(s.last_active);
+        }
         self.sessions.clearRetainingCapacity();
     }
 
@@ -1662,7 +1695,7 @@ pub const AppState = struct {
     /// name it. One read at startup and one per save, not one per frame: the
     /// chip is drawn on every frame the chat is open.
     fn loadDefaultModel(self: *AppState) void {
-        self.gpa.free(self.default_model);
+        self.retire(self.default_model);
         self.default_model = &.{};
         var doc = backend.ConfigDoc.load(self.gpa, self.io, self.paths.config) catch return;
         defer doc.deinit();
