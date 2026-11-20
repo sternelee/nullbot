@@ -1359,7 +1359,7 @@ fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
             }
         }
     }
-    ui.text(c, "The GUI starts a gateway for the chat and the JSON pages. Restart it after changing where it binds.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
+    ui.text(c, "The window serves the runtime's HTTP gateway in-process, for external clients. Chat and the pages are answered directly, not through it.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
     kit.separator(c, .{});
     const status = s.daemonStatusText(c.alloc());
     configFact(s, c, "Status", status, if (running) s.palette.success else s.palette.muted, false);
