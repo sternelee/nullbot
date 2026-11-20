@@ -468,6 +468,11 @@ test "every json page paints its rows below the toolbar" {
     var path_buffer: [256]u8 = undefined;
     const stub = try harness.writeStub(threaded.io(), &path_buffer);
 
+    // Same as the data-page test: a config of its own, so a page's rows come
+    // from a known file rather than the process environment's real one.
+    _ = try harness.writeConfig(threaded.io(), harness.page_config);
+    defer harness.removeConfig(threaded.io());
+
     var w: Window = undefined;
     try w.initWith(.{ .runtime = stub });
     defer w.deinit();
@@ -488,9 +493,10 @@ test "every json page paints its rows below the toolbar" {
         // fold controls. Either way something has to be on the page.
         if (w.app.rows) |*r| {
             // An empty list is a real answer — "no skills installed" — and
-            // the page says so rather than drawing an empty tree.
+            // the page says so rather than drawing an empty tree. A reader
+            // that set a note (the workspace audit's verdict) leads with it.
             if (r.totalRows() == 0) {
-                if (!w.tester.containsText("No ")) {
+                if (r.note.len == 0 and !w.tester.containsText("No ")) {
                     std.debug.print("page {s}: empty list with no notice\n", .{@tagName(page)});
                     return error.SilentEmptyList;
                 }
@@ -638,6 +644,13 @@ test "every data page answers without a runtime on disk" {
     defer threaded.deinit();
     var path_buffer: [256]u8 = undefined;
     const stub = try harness.writeFailingStub(threaded.io(), &path_buffer);
+
+    // A config of its own, so the pages are answered from a known file rather
+    // than whatever the developer's real `~/.nullclaw/config.json` happens to
+    // hold. Before the window resolved its own config path this test only
+    // passed because the process environment found a real config.
+    _ = try harness.writeConfig(threaded.io(), harness.page_config);
+    defer harness.removeConfig(threaded.io());
 
     var w: Window = undefined;
     try w.initWith(.{ .runtime = stub });
@@ -918,4 +931,31 @@ test "clicking the model chip survives the config it reloads" {
     try w.tester.clickText("stub-model");
     w.tester.settle(0.5);
     try testing.expectEqual(state.Page.config, w.app.page);
+}
+
+// Regression: the in-process data pages called `Config.load`, which resolves
+// the config directory from the *process* environment. The window resolves its
+// paths from its own environment (a test home, or `NULLCLAW_HOME`), so a data
+// page could read a different user's config than the config page showed. The
+// Models page is the visible one: it summarised whatever the process's own
+// `~/.nullclaw/config.json` said, not the file the window was pointed at.
+test "a data page reads the window's config, not the process's" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+
+    // A provider name no machine's real config is likely to carry, so reading
+    // the process environment instead of the test home is visible. A provider
+    // entry keeps the page from drawing its empty state before the note.
+    _ = try harness.writeConfig(threaded.io(), "{\"agents\":{\"defaults\":{\"model\":{\"primary\":\"testprovider/test-model\"}}},\"models\":{\"providers\":{\"testprovider\":{\"api_key\":\"example\"}}}}");
+    defer harness.removeConfig(threaded.io());
+
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.openPage(.models);
+    w.settle(1);
+    try testing.expect(w.tester.containsText("testprovider"));
+    try testing.expect(!w.tester.containsText("zhipu"));
 }

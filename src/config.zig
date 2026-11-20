@@ -435,6 +435,27 @@ pub const Config = struct {
     }
 
     pub fn load(backing_allocator: std.mem.Allocator) !Config {
+        const config_dir = config_paths.defaultConfigDir(backing_allocator) catch |err| switch (err) {
+            error.HomeDirNotFound => return error.NoHomeDir,
+            else => return err,
+        };
+        defer backing_allocator.free(config_dir);
+        return loadFromConfigDir(backing_allocator, config_dir);
+    }
+
+    /// Load the config whose file lives at `config_path`, rather than the one
+    /// the process's own `HOME`/`NULLCLAW_HOME` resolves to. A caller that
+    /// already knows where the runtime's state is — the desktop window, which
+    /// resolves paths from its own environment — must not read a different
+    /// user's file out of the process environment.
+    pub fn loadFromPath(backing_allocator: std.mem.Allocator, config_path: []const u8) !Config {
+        const config_dir = std_compat.fs.path.dirname(config_path) orelse ".";
+        return loadFromConfigDir(backing_allocator, config_dir);
+    }
+
+    /// The shared body of `load` and `loadFromPath`: read `config.json` out of
+    /// `config_dir` and resolve everything relative to it.
+    pub fn loadFromConfigDir(backing_allocator: std.mem.Allocator, config_dir_in: []const u8) !Config {
         // Use an arena so deinit() can free everything in one shot.
         const arena_ptr = try backing_allocator.create(std.heap.ArenaAllocator);
         arena_ptr.* = std.heap.ArenaAllocator.init(backing_allocator);
@@ -444,10 +465,7 @@ pub const Config = struct {
         }
         const allocator = arena_ptr.allocator();
 
-        const config_dir = config_paths.defaultConfigDir(allocator) catch |err| switch (err) {
-            error.HomeDirNotFound => return error.NoHomeDir,
-            else => return err,
-        };
+        const config_dir = try allocator.dupe(u8, config_dir_in);
         const config_path = try config_paths.pathFromConfigDir(allocator, config_dir, "config.json");
         const default_workspace_dir = try config_paths.defaultWorkspaceDirFromConfigDir(allocator, config_dir);
 
@@ -4604,6 +4622,38 @@ test "load merges relative tool_customizations_file with inline customizations" 
     try std.testing.expectEqualStrings("tool-customizations.json", loaded.tools.tool_customizations_file.?);
     try std.testing.expectEqualStrings("please", loaded.tools.trigger_modifiers[0]);
     try std.testing.expectEqualStrings("!", loaded.tools.trigger_punctuation);
+}
+
+// `loadFromPath` reads the file the caller names, not the one the process
+// environment resolves to. The desktop window resolves its own config path
+// from its own environment, so an in-process page load must not fall back to
+// the process's `HOME`/`NULLCLAW_HOME` and read a different user's file.
+test "loadFromPath reads the named file, not the process home" {
+    if (comptime builtin.os.tag == .windows) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var tmp_dir = @import("compat").fs.Dir.wrap(tmp.dir);
+    try tmp_dir.makeDir("named");
+    try tmp_dir.writeFile(.{ .sub_path = "named/config.json", .data =
+        \\{"agents":{"defaults":{"model":{"primary":"namedprovider/named-model"}}}}
+    });
+
+    const named_home = try tmp_dir.realpathAlloc(allocator, "named");
+    defer allocator.free(named_home);
+    const config_path = try std.fmt.allocPrint(allocator, "{s}/config.json", .{named_home});
+    defer allocator.free(config_path);
+
+    var loaded = try Config.loadFromPath(allocator, config_path);
+    defer loaded.deinit();
+
+    try std.testing.expectEqualStrings("namedprovider", loaded.default_provider);
+    try std.testing.expectEqualStrings("named-model", loaded.default_model.?);
+    // Everything resolves relative to the named directory, not the process's:
+    // the workspace is the named directory's own `workspace`.
+    const expected_workspace = try std.fmt.allocPrint(allocator, "{s}/workspace", .{named_home});
+    defer allocator.free(expected_workspace);
+    try std.testing.expectEqualStrings(expected_workspace, loaded.workspace_dir);
 }
 
 test "json parse autonomy allow_raw_url_chars" {

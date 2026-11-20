@@ -990,7 +990,7 @@ pub const AppState = struct {
         // window that has never run a turn still has a config on disk.
         return switch (self.page) {
             .capabilities, .models, .memory, .mcp, .skills, .channels, .workspace => blk: {
-                var cfg = yc.config.Config.load(self.gpa) catch break :blk null;
+                var cfg = yc.config.Config.loadFromPath(self.gpa, self.paths.config) catch break :blk null;
                 defer cfg.deinit();
                 break :blk switch (self.page) {
                     // Capabilities lists what the build has even without a
@@ -1225,7 +1225,7 @@ pub const AppState = struct {
         // Validation is a pure check on the loaded config; a rejection is
         // shown as the page's complaint rather than a spawned command's
         // stderr.
-        var cfg = yc.config.Config.load(self.gpa) catch {
+        var cfg = yc.config.Config.loadFromPath(self.gpa, self.paths.config) catch {
             self.config_running = false;
             self.loadConfigSummary();
             return;
@@ -1246,7 +1246,7 @@ pub const AppState = struct {
     fn loadConfigSummary(self: *AppState) void {
         // Both are runtime state the runtime already exposes as functions, so
         // the page asks them in-process rather than spawning two commands.
-        var cfg = yc.config.Config.load(self.gpa) catch return;
+        var cfg = yc.config.Config.loadFromPath(self.gpa, self.paths.config) catch return;
         defer cfg.deinit();
         if (yc.capabilities.buildManifestJson(self.gpa, &cfg, null) catch null) |caps_json| {
             defer self.gpa.free(caps_json);
@@ -1530,7 +1530,7 @@ pub const AppState = struct {
         // builds from disk is checked here, so a save is confirmed against
         // what the gateway will read when it restarts, without spawning a
         // `config validate` process that a linked window does not ship.
-        var cfg = yc.config.Config.load(self.gpa) catch {
+        var cfg = yc.config.Config.loadFromPath(self.gpa, self.paths.config) catch {
             self.restartDaemon();
             return;
         };

@@ -1167,11 +1167,17 @@ fn rowsView(s: *AppState, c: *ui.Context, rows: *backend.Rows) void {
     if (rows.totalRows() == 0) {
         // The command answered, and the answer was nothing. Say that, with
         // the command that would change it, rather than drawing an empty
-        // pair of brackets.
+        // pair of brackets. A reader that still set a note — the workspace
+        // audit's verdict, "no findings above the threshold" — has the better
+        // sentence, so it leads.
         const empty = ui.div(c).column().wFull().center().gap(7).py(40);
         defer empty.end();
         ui.icon(c, "doc.text", .{ .size = 22, .color = s.palette.faint });
-        ui.text(c, emptyTitle(s.page), .{ .size = 13, .color = s.palette.muted });
+        if (rows.note.len > 0) {
+            ui.text(c, rows.note, .{ .size = 13, .color = s.palette.muted, .mono = true });
+        } else {
+            ui.text(c, emptyTitle(s.page), .{ .size = 13, .color = s.palette.muted });
+        }
         ui.text(c, emptyHint(s.page), .{ .size = 11.5, .color = s.palette.faint });
         return;
     }

@@ -99,6 +99,10 @@ pub fn writeConfig(io: std.Io, text: []const u8) ![]const u8 {
     const dir = test_home ++ "/.nullclaw";
     const file = dir ++ "/config.json";
     std.Io.Dir.cwd().createDirPath(io, dir) catch {};
+    // The runtime's default workspace, beside its config. The workspace audit
+    // page walks it, and a missing directory makes the in-process answer fail
+    // and fall back to a spawned command. An empty one audits clean.
+    std.Io.Dir.cwd().createDirPath(io, dir ++ "/workspace") catch {};
     try std.Io.Dir.cwd().writeFile(io, .{ .sub_path = file, .data = text });
     return file;
 }
@@ -106,6 +110,24 @@ pub fn writeConfig(io: std.Io, text: []const u8) ![]const u8 {
 pub fn removeConfig(io: std.Io) void {
     std.Io.Dir.cwd().deleteFile(io, test_home ++ "/.nullclaw/config.json") catch {};
 }
+
+/// A config for the tests that walk every data page. It has to be
+/// self-contained: the pages answer from it in-process, and a page whose answer
+/// is empty or unreadable falls back to a spawned command. Before the window
+/// resolved its own config path these tests read whatever the process
+/// environment pointed at, so they passed on a machine with a real
+/// `~/.nullclaw/config.json` and failed on one without.
+///
+/// - a provider, so the Models page has a row to paint;
+/// - `memory.backend = "none"`, so the Memory page answers without opening a
+///   SQLite database in the test home.
+pub const page_config =
+    \\{
+    \\  "agents": { "defaults": { "model": { "primary": "openrouter/stub-model" } } },
+    \\  "models": { "providers": { "openrouter": { "api_key": "example" } } },
+    \\  "memory": { "backend": "none" }
+    \\}
+;
 
 pub const Window = struct {
     threaded: std.Io.Threaded,
