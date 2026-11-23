@@ -38,6 +38,12 @@ pub const Spacing = struct {
 
     /// Avatar size
     pub const avatar_size: f32 = 30;
+
+    /// Settings, after zeron's own: the column a page's cards sit in, a row's
+    /// height, and the width a row's control is given.
+    pub const settings_measure: f32 = 640;
+    pub const settings_row: f32 = 52;
+    pub const settings_control: f32 = 240;
     /// Config label width
     pub const label_w: f32 = 260;
     /// Config field width

@@ -499,6 +499,11 @@ pub const ConfigDoc = struct {
             if (std.fmt.parseInt(i64, trimmed, 10)) |n| {
                 return self.setInteger(path, n);
             } else |_| {}
+            // A decimal is a number too: `default_temperature` is 0.7, and
+            // writing it as a string makes the runtime reject the file.
+            if (std.fmt.parseFloat(f64, trimmed)) |f| {
+                return self.setValue(path, .{ .float = f });
+            } else |_| {}
         }
         return self.setString(path, trimmed);
     }

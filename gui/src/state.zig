@@ -189,6 +189,14 @@ pub const prov_ids = [_][]const u8{
 
 /// Memory engines `src/memory/engines/registry.zig` registers. Shown in the
 /// configuration page's Memory select, in the order the registry lists them.
+/// `reasoning_effort` values the runtime accepts, in the order the select
+/// offers them. The empty first entry is "not set", which is what a config
+/// without the key means.
+pub const reasoning_efforts = [_][]const u8{ "low", "medium", "high" };
+
+/// `runtime.kind` values: the agent runs in this process, or in a container.
+pub const runtime_kinds = [_][]const u8{ "native", "docker" };
+
 pub const memory_backends = [_][]const u8{
     "hybrid",
     "sqlite",
@@ -327,6 +335,53 @@ pub const AppState = struct {
     cfg_cron_interval: ui.TextBuffer = .{},
     /// MCP: the servers the agent can call, one `name command` per line.
     cfg_mcp_servers: ui.TextBuffer = .{},
+
+    // ── The rest of the settings the page edits ──────────────────────────
+    // Each is a field of `config.json` the runtime actually reads, chosen
+    // because it changes what the agent does rather than how it is tuned.
+    // The long tail (memory search internals, qmd, per-channel keys) stays in
+    // the advanced fold: a form that mirrors every key is a worse editor than
+    // the file itself.
+
+    /// `default_temperature`: how much variation the model is allowed.
+    cfg_temperature: ui.TextBuffer = .{},
+    /// `reasoning_effort`: how hard a reasoning model thinks, when it takes one.
+    /// Null when the config does not set it, which is what the empty select
+    /// shows.
+    cfg_reasoning_effort: ?usize = null,
+    /// `agent.max_tool_iterations`: how many tool calls one turn may make.
+    cfg_max_tool_iterations: ui.TextBuffer = .{},
+    /// `agent.max_history_messages`: how much of the conversation is sent.
+    cfg_max_history: ui.TextBuffer = .{},
+    /// `agent.compact_context`: whether long turns are summarised.
+    cfg_compact_context: bool = false,
+    /// `agent.timezone`: the zone the agent reasons about times in.
+    cfg_timezone: ui.TextBuffer = .{},
+    /// `agent.message_timeout_secs`: how long one turn may take.
+    cfg_message_timeout: ui.TextBuffer = .{},
+    /// `autonomy.workspace_only`: whether the agent is held to the workspace.
+    cfg_workspace_only: bool = true,
+    /// `autonomy.max_actions_per_hour`: the rate the agent is held to.
+    cfg_max_actions: ui.TextBuffer = .{},
+    /// `autonomy.block_high_risk_commands`: whether the dangerous ones are refused.
+    cfg_block_high_risk: bool = true,
+    /// `autonomy.require_approval_for_medium_risk`: whether the middle ones ask.
+    cfg_approve_medium: bool = true,
+    /// `runtime.kind`: native, or a container.
+    cfg_runtime_kind: usize = 0,
+    /// `runtime.docker.image`: the container the agent runs in.
+    cfg_docker_image: ui.TextBuffer = .{},
+    /// `gateway.require_pairing`: whether a client must pair before it is served.
+    cfg_gateway_require_pairing: bool = true,
+    /// `memory.search.enabled`: whether memory is searched by meaning.
+    cfg_memory_search: bool = true,
+    /// `scheduler.enabled` / `scheduler.max_tasks`: the task runner.
+    cfg_scheduler_enabled: bool = true,
+    cfg_scheduler_max_tasks: ui.TextBuffer = .{},
+    /// `diagnostics.log_tool_calls` / `log_llm_io`: what the runtime records.
+    cfg_log_tool_calls: bool = false,
+    cfg_log_llm_io: bool = false,
+
     show_advanced_config: bool = false,
 
     /// What the Skills and Capabilities pages last read, so the configuration
@@ -1441,6 +1496,47 @@ pub const AppState = struct {
         self.cfg_cron_enabled = std.ascii.eqlIgnoreCase(doc.get("cron.enabled") orelse "false", "true");
         setBuf(&self.cfg_cron_interval, doc.get("cron.interval_minutes") orelse "30");
         self.syncMcpFromConfig(doc);
+
+        // The model's own settings.
+        setBuf(&self.cfg_temperature, doc.get("default_temperature") orelse "0.7");
+        self.cfg_reasoning_effort = blk: {
+            const v = doc.get("reasoning_effort") orelse "";
+            for (reasoning_efforts, 0..) |name, i| {
+                if (std.mem.eql(u8, name, v)) break :blk @as(?usize, i);
+            }
+            break :blk null;
+        };
+
+        // The agent loop.
+        setBuf(&self.cfg_max_tool_iterations, doc.get("agent.max_tool_iterations") orelse "1000");
+        setBuf(&self.cfg_max_history, doc.get("agent.max_history_messages") orelse "100");
+        self.cfg_compact_context = std.ascii.eqlIgnoreCase(doc.get("agent.compact_context") orelse "false", "true");
+        setBuf(&self.cfg_timezone, doc.get("agent.timezone") orelse "UTC");
+        setBuf(&self.cfg_message_timeout, doc.get("agent.message_timeout_secs") orelse "600");
+
+        // What the agent is allowed to do.
+        self.cfg_workspace_only = std.ascii.eqlIgnoreCase(doc.get("autonomy.workspace_only") orelse "true", "true");
+        setBuf(&self.cfg_max_actions, doc.get("autonomy.max_actions_per_hour") orelse "20");
+        self.cfg_block_high_risk = std.ascii.eqlIgnoreCase(doc.get("autonomy.block_high_risk_commands") orelse "true", "true");
+        self.cfg_approve_medium = std.ascii.eqlIgnoreCase(doc.get("autonomy.require_approval_for_medium_risk") orelse "true", "true");
+
+        // Where it runs.
+        self.cfg_runtime_kind = blk: {
+            const v = doc.get("runtime.kind") orelse "native";
+            for (runtime_kinds, 0..) |name, i| {
+                if (std.mem.eql(u8, name, v)) break :blk i;
+            }
+            break :blk 0;
+        };
+        setBuf(&self.cfg_docker_image, doc.get("runtime.docker.image") orelse "alpine:3.24");
+
+        // The gateway, memory search, the scheduler and what gets recorded.
+        self.cfg_gateway_require_pairing = std.ascii.eqlIgnoreCase(doc.get("gateway.require_pairing") orelse "true", "true");
+        self.cfg_memory_search = std.ascii.eqlIgnoreCase(doc.get("memory.search.enabled") orelse "true", "true");
+        self.cfg_scheduler_enabled = std.ascii.eqlIgnoreCase(doc.get("scheduler.enabled") orelse "true", "true");
+        setBuf(&self.cfg_scheduler_max_tasks, doc.get("scheduler.max_tasks") orelse "64");
+        self.cfg_log_tool_calls = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_tool_calls") orelse "false", "true");
+        self.cfg_log_llm_io = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_llm_io") orelse "false", "true");
     }
 
     /// MCP servers are objects, not a string, so the form shows them one per
@@ -1688,6 +1784,86 @@ pub const AppState = struct {
         }
 
         changed = self.applyMcpServers(doc) or changed;
+        changed = self.applyAgentAndSafety(doc) or changed;
+        return changed;
+    }
+
+    /// Writes the model, agent-loop, autonomy, runtime, gateway, memory-search,
+    /// scheduler and diagnostics fields. Each is compared before it is written,
+    /// so an Apply that changed nothing leaves the file alone.
+    fn applyAgentAndSafety(self: *AppState, doc: *backend.ConfigDoc) bool {
+        var changed = false;
+
+        // A helper for the fields that are text in the form and may be a
+        // number, a boolean or a string in the file: `setAuto` types them.
+        const Fields = struct {
+            fn text(d: *backend.ConfigDoc, path: []const u8, buf: *ui.TextBuffer, ch: *bool) void {
+                const v = std.mem.trim(u8, buf.text(), " \t\r\n");
+                if (v.len == 0) return;
+                const now = d.get(path) orelse "";
+                if (std.mem.eql(u8, now, v)) return;
+                d.setAuto(path, v) catch return;
+                ch.* = true;
+            }
+            /// `fallback` is what the runtime means when the key is absent —
+            /// most flags default to false, but `workspace_only` and the
+            /// approval flags default to true. Reading a missing key as false
+            /// made those three look unchanged when they were turned off, so
+            /// the file kept the old value.
+            fn flag(d: *backend.ConfigDoc, path: []const u8, value: bool, fallback: bool, ch: *bool) void {
+                const now = std.ascii.eqlIgnoreCase(d.get(path) orelse (if (fallback) "true" else "false"), "true");
+                if (now == value) return;
+                d.setBool(path, value) catch return;
+                ch.* = true;
+            }
+        };
+
+        // The model.
+        Fields.text(doc, "default_temperature", &self.cfg_temperature, &changed);
+        {
+            const want: []const u8 = if (self.cfg_reasoning_effort) |i|
+                reasoning_efforts[i % reasoning_efforts.len]
+            else
+                "";
+            const now = doc.get("reasoning_effort") orelse "";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("reasoning_effort", want) catch {};
+                changed = true;
+            }
+        }
+
+        // The agent loop.
+        Fields.text(doc, "agent.max_tool_iterations", &self.cfg_max_tool_iterations, &changed);
+        Fields.text(doc, "agent.max_history_messages", &self.cfg_max_history, &changed);
+        Fields.flag(doc, "agent.compact_context", self.cfg_compact_context, false, &changed);
+        Fields.text(doc, "agent.timezone", &self.cfg_timezone, &changed);
+        Fields.text(doc, "agent.message_timeout_secs", &self.cfg_message_timeout, &changed);
+
+        // What the agent may do.
+        Fields.flag(doc, "autonomy.workspace_only", self.cfg_workspace_only, true, &changed);
+        Fields.text(doc, "autonomy.max_actions_per_hour", &self.cfg_max_actions, &changed);
+        Fields.flag(doc, "autonomy.block_high_risk_commands", self.cfg_block_high_risk, true, &changed);
+        Fields.flag(doc, "autonomy.require_approval_for_medium_risk", self.cfg_approve_medium, true, &changed);
+
+        // Where it runs.
+        {
+            const want = runtime_kinds[self.cfg_runtime_kind % runtime_kinds.len];
+            const now = doc.get("runtime.kind") orelse "native";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("runtime.kind", want) catch {};
+                changed = true;
+            }
+        }
+        Fields.text(doc, "runtime.docker.image", &self.cfg_docker_image, &changed);
+
+        // The gateway, memory search, the scheduler, and what is recorded.
+        Fields.flag(doc, "gateway.require_pairing", self.cfg_gateway_require_pairing, true, &changed);
+        Fields.flag(doc, "memory.search.enabled", self.cfg_memory_search, true, &changed);
+        Fields.flag(doc, "scheduler.enabled", self.cfg_scheduler_enabled, true, &changed);
+        Fields.text(doc, "scheduler.max_tasks", &self.cfg_scheduler_max_tasks, &changed);
+        Fields.flag(doc, "diagnostics.log_tool_calls", self.cfg_log_tool_calls, false, &changed);
+        Fields.flag(doc, "diagnostics.log_llm_io", self.cfg_log_llm_io, false, &changed);
+
         return changed;
     }
 

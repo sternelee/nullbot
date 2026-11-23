@@ -851,6 +851,76 @@ test "the config form writes what it was given to the file" {
     try testing.expectEqualStrings("/tmp/scratch-workspace", w.app.config.?.get("workspace").?);
 }
 
+// The settings the page grew: each is a field the runtime reads, and each has
+// to survive a trip through the form and back into the file. A field the page
+// shows but never writes is a control that does nothing.
+test "the settings page writes the agent, safety and runtime fields" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    var path_buffer: [256]u8 = undefined;
+    const stub = try harness.writeStub(io, &path_buffer);
+    _ = try harness.writeConfig(io,
+        \\{"agents":{"defaults":{"model":{"primary":"openrouter/stub-model"}}}}
+    );
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{ .runtime = stub });
+    defer w.deinit();
+
+    w.app.openPage(.config);
+    w.settle(2);
+    try testing.expect(w.app.config != null);
+
+    // The form, as a person would fill it.
+    w.app.cfg_temperature.set("0.2");
+    w.app.cfg_reasoning_effort = 2; // "high"
+    w.app.cfg_max_tool_iterations.set("40");
+    w.app.cfg_max_history.set("60");
+    w.app.cfg_compact_context = true;
+    w.app.cfg_timezone.set("Asia/Shanghai");
+    w.app.cfg_message_timeout.set("120");
+    w.app.cfg_workspace_only = false;
+    w.app.cfg_max_actions.set("5");
+    w.app.cfg_block_high_risk = false;
+    w.app.cfg_approve_medium = false;
+    w.app.cfg_runtime_kind = 1; // docker
+    w.app.cfg_docker_image.set("alpine:3.21");
+    w.app.cfg_gateway_require_pairing = false;
+    w.app.cfg_memory_search = false;
+    w.app.cfg_scheduler_enabled = false;
+    w.app.cfg_scheduler_max_tasks.set("8");
+    w.app.cfg_log_tool_calls = true;
+    w.app.cfg_log_llm_io = true;
+
+    w.app.applyConfigForm();
+    w.app.saveConfig();
+    w.settle(2);
+
+    const written = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(1 << 16));
+    defer testing.allocator.free(written);
+
+    try testing.expect(std.mem.indexOf(u8, written, "\"default_temperature\": 0.2") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"reasoning_effort\": \"high\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"max_tool_iterations\": 40") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"max_history_messages\": 60") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"compact_context\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "Asia/Shanghai") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"message_timeout_secs\": 120") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"workspace_only\": false") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"max_actions_per_hour\": 5") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"block_high_risk_commands\": false") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"require_approval_for_medium_risk\": false") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"kind\": \"docker\"") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "alpine:3.21") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"require_pairing\": false") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"max_tasks\": 8") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"log_tool_calls\": true") != null);
+    try testing.expect(std.mem.indexOf(u8, written, "\"log_llm_io\": true") != null);
+}
+
 // Regression: `gotConfig` loaded the file but never handed it to the tree, so
 // the config page drew its toolbar over an empty pane and `03-config.png`
 // showed nothing at all. It runs without a runtime on purpose: reading the

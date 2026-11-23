@@ -942,7 +942,11 @@ fn configPage(s: *AppState, c: *ui.Context) void {
         ui.key(c, "config-scroll");
         const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip();
         defer scroller.end();
-        const page = ui.div(c).column().wFull().maxW(content_max).gap(16).pb(16);
+        // The settings measure, as zeron's own: a card wider than this reads as
+        // a table rather than a form, and its rows drift apart.
+        const centre = ui.div(c).row().wFull().justifyCenter();
+        defer centre.end();
+        const page = ui.div(c).column().w(design.Spacing.settings_measure).gap(22).pb(24);
         defer page.end();
 
         // The shell header already names the page and its file, so this page
@@ -972,18 +976,21 @@ fn configStatusChip(s: *AppState, c: *ui.Context) void {
 /// explanation under them, then the facts.
 fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
     const running = s.gatewayRunning();
-    const card = configCard(c, s);
+    const section = settingsSection(c, s, "Runtime server", "The HTTP gateway this window serves in-process, for external clients. Chat and the pages are answered directly, not through it.");
+    defer section.end();
+    const card = settingsCard(c, s);
     defer card.end();
+
     {
-        const row = ui.div(c).row().wFull().gap(10).itemsCenter();
+        const row = settingRow(s, c, "Built-in nullclaw runtime", if (running) "Serving on the gateway's port." else "Not running.");
         defer row.end();
-        ui.icon(c, "circle.lefthalf.filled", .{ .size = 13, .color = if (running) s.palette.success else s.palette.warning });
-        ui.text(c, "Built-in nullclaw runtime", .{ .size = 13.5, .weight = .semibold, .color = s.palette.text });
+        const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control)
+            .gap(8).itemsCenter().justifyEnd();
+        defer field.end();
         kit.tag(c, if (running) "running" else "stopped", .{
             .status = if (running) .success else .neutral,
             .pill = true,
         });
-        ui.spacer(c);
         if (ui.button(c, if (running) "Restart" else "Start", .{ .size = 12, .icon = "arrow.clockwise" }).clicked) {
             s.restartDaemon();
             s.say("runtime restarted");
@@ -995,11 +1002,27 @@ fn runtimeStatusCard(s: *AppState, c: *ui.Context) void {
             }
         }
     }
-    ui.text(c, "The window serves the runtime's HTTP gateway in-process, for external clients. Chat and the pages are answered directly, not through it.", .{ .size = 11.5, .color = s.palette.muted, .wrap = true });
-    kit.separator(c, .{});
-    const status = s.daemonStatusText(c.alloc());
-    configFact(s, c, "Status", status, if (running) s.palette.success else s.palette.muted, false);
-    configFact(s, c, "Binary", s.exe, s.palette.faint, true);
+    settingsRule(c, s);
+    {
+        const row = settingRow(s, c, "Status", "");
+        defer row.end();
+        const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control)
+            .itemsCenter().justifyEnd();
+        defer field.end();
+        ui.text(c, s.daemonStatusText(c.alloc()), .{
+            .size = 11.5,
+            .color = if (running) s.palette.success else s.palette.muted,
+        });
+    }
+    settingsRule(c, s);
+    {
+        const row = settingRow(s, c, "Binary", "");
+        defer row.end();
+        const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control)
+            .itemsCenter().justifyEnd();
+        defer field.end();
+        clipped(c, s.exe, .{ .size = 11, .mono = true, .color = s.palette.faint, .truncate = .middle });
+    }
 }
 
 /// One `Label   value` line inside a card, with the label held to a fixed
@@ -1029,53 +1052,175 @@ fn configMissingNotice(s: *AppState, c: *ui.Context) void {
     ui.textf(c, .{ .size = 11.5, .color = s.palette.muted, .wrap = true }, "The form is ready, but Apply and Save stay disabled until {s} exists. Run `nullclaw onboard`, then Reload from disk.", .{s.paths.config});
 }
 
-/// A small muted heading above a card. Returns an open column the caller
-/// must `end` — the same shape nanoterm uses for its settings sections.
-fn configSection(c: *ui.Context, s: *AppState, title: []const u8, note: []const u8) ui.Div {
+// --- settings, after zeron's own design system ---------------------------
+//
+// A settings page is a column of sections. A section is a title, a sentence
+// about what the section changes, and one card. A card is a run of rows with a
+// hairline between each, from the card's edge to its edge — the rule splits the
+// card, it does not underline the text. A row is a name and a sentence on the
+// left, its control on the right, washed edge to edge under the pointer.
+
+/// A section: its title, what it changes, and the card its rows live in.
+/// Returns an open column the caller must `end`.
+fn settingsSection(c: *ui.Context, s: *AppState, title: []const u8, note: []const u8) ui.Div {
     const col = ui.div(c).column().wFull().gap(8);
-    ui.text(c, title, .{ .size = 12, .weight = .semibold, .color = s.palette.muted });
-    if (note.len > 0) ui.text(c, note, .{ .size = 11.5, .color = s.palette.faint, .wrap = true });
+    const head = ui.div(c).column().wFull().gap(3);
+    defer head.end();
+    ui.text(c, title, .{ .size = 14, .weight = .semibold, .color = s.palette.text });
+    if (note.len > 0) {
+        ui.text(c, note, .{ .size = 11.5, .color = s.palette.faint, .wrap = true, .leading = 1.4 });
+    }
     return col;
 }
 
-fn configCard(c: *ui.Context, s: *AppState) ui.Div {
-    return ui.div(c).column().wFull().gap(12).p(14).rounded(10).bg(s.palette.panel).border(s.palette.border).borderW(1);
+/// The card a section's rows sit in: one rounded box, clipped, with a hairline
+/// between rows. Returns an open column the caller must `end`.
+fn settingsCard(c: *ui.Context, s: *AppState) ui.Div {
+    return ui.div(c).column().wFull().rounded(design.Radius.lg)
+        .bg(s.palette.panel).border(s.palette.border).borderW(1).clip();
 }
 
-/// Left column of a setting: its name and a short sentence about it.
-fn fieldLabel(c: *ui.Context, s: *AppState, label: []const u8, hint: []const u8) void {
-    const col = ui.div(c).column().w(label_w).minW(label_w).gap(2);
-    defer col.end();
+/// The hairline between two rows: from the card's edge to its edge.
+fn settingsRule(c: *ui.Context, s: *AppState) void {
+    _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = s.palette.border }, .none, null);
+}
+
+/// One row: the name and its sentence on the left, the control on the right.
+/// `control` is built by the caller between the row's open and its end, so a
+/// field, a switch and a select all sit in the same place.
+fn settingRow(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8) ui.Div {
+    const row = ui.div(c).row().wFull()
+        .px(14).py(9).gap(16).itemsCenter();
+    c.node(row.index).style.min_height = design.Spacing.settings_row;
+    const text = ui.div(c).column().grow().minW(0).gap(2);
+    defer text.end();
     ui.text(c, label, .{ .size = 12.5, .color = s.palette.text });
-    if (hint.len > 0) ui.text(c, hint, .{ .size = 11, .color = s.palette.faint, .wrap = true });
+    if (hint.len > 0) {
+        ui.text(c, hint, .{ .size = 11, .color = s.palette.faint, .wrap = true, .leading = 1.35 });
+    }
+    return row;
 }
 
-fn formField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, placeholder: []const u8, buf: *ui.TextBuffer) void {
-    formFieldOpt(s, c, label, hint, placeholder, buf, .{});
-}
+/// How a settings text field is drawn: a secret as bullets, a value in the
+/// mono face. Named rather than inline, because Zig 0.17 has no default value
+/// for an anonymous struct parameter.
+const TextFieldOpts = struct {
+    password: bool = false,
+    mono: bool = true,
+};
 
-/// The same, with the field's own options: a secret is drawn as bullets.
-fn formFieldOpt(
+/// A row whose control is a text field.
+fn settingsTextField(
     s: *AppState,
     c: *ui.Context,
     label: []const u8,
     hint: []const u8,
     placeholder: []const u8,
     buf: *ui.TextBuffer,
-    opts: struct { password: bool = false },
 ) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
+    settingsTextFieldOpts(s, c, label, hint, placeholder, buf, .{});
+}
+
+fn settingsTextFieldOpts(
+    s: *AppState,
+    c: *ui.Context,
+    label: []const u8,
+    hint: []const u8,
+    placeholder: []const u8,
+    buf: *ui.TextBuffer,
+    opts: TextFieldOpts,
+) void {
+    const row = settingRow(s, c, label, hint);
     defer row.end();
-    fieldLabel(c, s, label, hint);
-    const field = ui.div(c).column().grow().minW(0);
+    // Zeron's 240, fixed: every control in a card sits in the same column, so
+    // a short value (a temperature) and a long one (a path) start at the same
+    // edge. A path too long for it scrolls inside the field rather than
+    // stretching the row.
+    const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control);
     defer field.end();
     _ = ui.textField(c, buf, .{
         .placeholder = placeholder,
-        .width = .{ .px = field_w },
-        .size = 12.5,
-        .mono = true,
+        .width = .fill,
+        .size = 12,
+        .mono = opts.mono,
         .password = opts.password,
         .color = c.theme.text,
+    });
+}
+
+/// The same, for a value that is a path or an address: the control takes the
+/// room the label leaves instead of zeron's 240, because a workspace path cut
+/// at 240 is a path nobody can read.
+fn settingsTextFieldWide(
+    s: *AppState,
+    c: *ui.Context,
+    label: []const u8,
+    hint: []const u8,
+    placeholder: []const u8,
+    buf: *ui.TextBuffer,
+) void {
+    const row = settingRow(s, c, label, hint);
+    defer row.end();
+    const field = ui.div(c).row().grow().minW(design.Spacing.settings_control);
+    defer field.end();
+    _ = ui.textField(c, buf, .{
+        .placeholder = placeholder,
+        .width = .fill,
+        .size = 12,
+        .mono = true,
+        .color = c.theme.text,
+    });
+}
+
+/// A row whose control is a switch, with its state said beside it.
+fn settingsSwitch(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, value: *bool) void {
+    const row = settingRow(s, c, label, hint);
+    defer row.end();
+    const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control)
+        .gap(8).itemsCenter();
+    defer field.end();
+    _ = ui.toggle(c, "", value);
+    ui.text(c, if (value.*) "On" else "Off", .{
+        .size = 11.5,
+        .color = if (value.*) s.palette.text else s.palette.faint,
+    });
+}
+
+/// A row whose control is a segmented choice over a fixed set of values.
+fn settingsSegmented(
+    s: *AppState,
+    c: *ui.Context,
+    label: []const u8,
+    hint: []const u8,
+    names: []const []const u8,
+    picked: *usize,
+) void {
+    const row = settingRow(s, c, label, hint);
+    defer row.end();
+    const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control)
+        .justifyEnd();
+    defer field.end();
+    _ = ui.segmented(c, names, picked);
+}
+
+/// A row whose control is a select over a fixed set of values.
+fn settingsSelect(
+    s: *AppState,
+    c: *ui.Context,
+    key: []const u8,
+    label: []const u8,
+    hint: []const u8,
+    options: []const []const u8,
+    picked: *?usize,
+    placeholder: []const u8,
+) void {
+    const row = settingRow(s, c, label, hint);
+    defer row.end();
+    const field = ui.div(c).row().w(design.Spacing.settings_control).minW(design.Spacing.settings_control);
+    defer field.end();
+    _ = kit.select(c, key, options, picked, .{
+        .placeholder = placeholder,
+        .width = design.Spacing.settings_control,
     });
 }
 
@@ -1083,21 +1228,15 @@ fn formFieldOpt(
 /// names if it is not in that list. A select rather than free text, so the
 /// value can only be one the runtime actually understands.
 fn providerField(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
-    defer row.end();
-    fieldLabel(c, s, "Default provider", "Before the slash in `model.primary`.");
     if (s.cfg_provider_options.len == 0) {
-        ui.text(c, "No providers known to the runtime.", .{ .size = 12, .color = s.palette.muted });
+        const row = settingRow(s, c, "Provider", "Before the slash in `agents.defaults.model.primary`.");
+        defer row.end();
+        ui.text(c, "No providers known to the runtime.", .{ .size = 11.5, .color = s.palette.muted });
         return;
     }
     var picked: ?usize = @as(?usize, s.cfg_default_provider);
-    // `kit.select` measures in points while the fields beside it fill, so it
-    // is given the widest fixed width that still lines up with them.
-    const field = ui.div(c).grow().minW(0);
-    defer field.end();
-    if (kit.select(c, "default-provider", s.cfg_provider_options, &picked, .{ .placeholder = "Choose…", .width = field_w })) {
-        s.cfg_default_provider = picked orelse 0;
-    }
+    settingsSelect(s, c, "default-provider", "Provider", "Before the slash in `agents.defaults.model.primary`.", s.cfg_provider_options, &picked, "Choose…");
+    if (picked) |p| s.cfg_default_provider = p;
 }
 
 /// A segmented choice instead of free text: nanoterm uses this for the
@@ -1110,31 +1249,19 @@ fn autonomyField(s: *AppState, c: *ui.Context) void {
     for (values, 0..) |value, i| {
         if (std.ascii.eqlIgnoreCase(current, value)) picked = i;
     }
-    {
-        const row = ui.div(c).row().wFull().gap(12).itemsCenter();
-        defer row.end();
-        fieldLabel(c, s, "Autonomy level", "`autonomy.level`.");
-        if (ui.segmented(c, &names, &picked)) s.cfg_autonomy_level.set(values[picked]);
-        ui.spacer(c);
+    settingsSegmented(s, c, "Level", "`autonomy.level`: how much the agent does on its own.", &names, &picked);
+    if (!std.ascii.eqlIgnoreCase(current, values[picked])) {
+        s.cfg_autonomy_level.set(values[picked]);
     }
     if (picked == 2) {
-        ui.text(c, "Yolo removes confirmations. Only use it on a workspace you trust.", .{ .size = 11, .color = s.palette.danger, .wrap = true });
+        const row = ui.div(c).row().wFull().px(14).pb(10);
+        defer row.end();
+        ui.text(c, "Yolo removes confirmations. Only use it on a workspace you trust.", .{
+            .size = 11,
+            .color = s.palette.danger,
+            .wrap = true,
+        });
     }
-}
-
-fn toggleField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8, value: *bool) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
-    defer row.end();
-    fieldLabel(c, s, label, hint);
-    // In the field column, not pushed to the card's edge: a switch floating
-    // a thousand points from its label reads as belonging to another row.
-    const field = ui.div(c).row().w(field_w).minW(field_w).gap(8).itemsCenter();
-    defer field.end();
-    _ = ui.toggle(c, "", value);
-    ui.text(c, if (value.*) "Enabled" else "Disabled", .{
-        .size = 11.5,
-        .color = if (value.*) s.palette.text else s.palette.faint,
-    });
 }
 
 /// The settings worth a control on this page: what answers, where it works,
@@ -1143,50 +1270,150 @@ fn toggleField(s: *AppState, c: *ui.Context, label: []const u8, hint: []const u8
 /// a worse editor than the file itself.
 fn commonConfigForm(s: *AppState, c: *ui.Context) void {
     {
-        const section = configSection(c, s, "Provider", "Which model answers, and the credentials used to reach it.");
+        const section = settingsSection(c, s, "Model", "Which model answers, and how it is asked.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
         defer card.end();
         providerField(s, c);
-        formField(s, c, "Default model", "After the slash in `model.primary`.", "anthropic/claude-sonnet-4, openai/gpt-5.3-codex", &s.cfg_default_model);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Default model", "After the slash in `agents.defaults.model.primary`.", "glm-4.6, claude-sonnet-4", &s.cfg_default_model);
+        settingsRule(c, s);
         // A key is a secret: bullets, not the value on screen and in every
         // screenshot of this page.
-        formFieldOpt(s, c, "Provider API key", "`models.providers.<name>.api_key`.", "API key for the default provider", &s.cfg_api_key, .{ .password = true });
-        formField(s, c, "Provider base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
+        settingsTextFieldOpts(s, c, "API key", "`models.providers.<name>.api_key`.", "the provider's key", &s.cfg_api_key, .{ .password = true });
+        settingsRule(c, s);
+        settingsTextFieldWide(s, c, "Base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Temperature", "`default_temperature`: how much variation the model may take.", "0.7", &s.cfg_temperature);
+        settingsRule(c, s);
+        {
+            var picked: ?usize = s.cfg_reasoning_effort;
+            settingsSelect(s, c, "reasoning-effort", "Reasoning effort", "`reasoning_effort`: how hard a reasoning model thinks.", &state.reasoning_efforts, &picked, "not set");
+            s.cfg_reasoning_effort = picked;
+        }
     }
     {
-        const section = configSection(c, s, "Workspace", "The directory the agent may read and write.");
+        const section = settingsSection(c, s, "Workspace", "The directory the agent may read and write.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
         defer card.end();
-        formField(s, c, "Workspace path", "`workspace`. Empty uses the runtime's default.", "~/.nullclaw/workspace", &s.cfg_workspace);
+        settingsTextFieldWide(s, c, "Path", "`workspace`. Empty uses the runtime's default.", "~/.nullclaw/workspace", &s.cfg_workspace);
     }
     {
-        const section = configSection(c, s, "MCP servers", "One per line: `name command`. The agent can call these.");
+        const section = settingsSection(c, s, "Agent", "How one turn runs: how far it may go, and how much it remembers.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
+        defer card.end();
+        settingsTextField(s, c, "Max tool iterations", "`agent.max_tool_iterations`: tool calls one turn may make.", "1000", &s.cfg_max_tool_iterations);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Max history messages", "`agent.max_history_messages`: how much of the conversation is sent.", "100", &s.cfg_max_history);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Compact context", "`agent.compact_context`: summarise long turns instead of dropping them.", &s.cfg_compact_context);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Timezone", "`agent.timezone`: the zone the agent reasons about times in.", "UTC", &s.cfg_timezone);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Message timeout", "`agent.message_timeout_secs`: how long one turn may take.", "600", &s.cfg_message_timeout);
+    }
+    {
+        const section = settingsSection(c, s, "Autonomy", "What the agent may do without asking.");
+        defer section.end();
+        const card = settingsCard(c, s);
+        defer card.end();
+        autonomyField(s, c);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Workspace only", "`autonomy.workspace_only`: hold the agent to the workspace.", &s.cfg_workspace_only);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Max actions per hour", "`autonomy.max_actions_per_hour`: the rate the agent is held to.", "20", &s.cfg_max_actions);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Block high-risk commands", "`autonomy.block_high_risk_commands`: refuse the dangerous ones outright.", &s.cfg_block_high_risk);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Ask for medium risk", "`autonomy.require_approval_for_medium_risk`: confirm the middle ones.", &s.cfg_approve_medium);
+    }
+    {
+        const section = settingsSection(c, s, "Runtime", "Where the agent's commands run.");
+        defer section.end();
+        const card = settingsCard(c, s);
+        defer card.end();
+        {
+            var picked: usize = s.cfg_runtime_kind;
+            const names = [_][]const u8{ "Native", "Docker" };
+            settingsSegmented(s, c, "Kind", "`runtime.kind`: this process, or a container.", &names, &picked);
+            s.cfg_runtime_kind = picked;
+        }
+        settingsRule(c, s);
+        settingsTextFieldWide(s, c, "Docker image", "`runtime.docker.image`: the container the agent runs in.", "alpine:3.24", &s.cfg_docker_image);
+    }
+    {
+        const section = settingsSection(c, s, "Gateway", "The HTTP server this window serves for other clients.");
+        defer section.end();
+        const card = settingsCard(c, s);
+        defer card.end();
+        settingsTextField(s, c, "Host", "`gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Port", "`gateway.port`.", "3000", &s.cfg_gateway_port);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Require pairing", "`gateway.require_pairing`: a client must pair before it is served.", &s.cfg_gateway_require_pairing);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Allow public bind", "`gateway.allow_public_bind`: listen beyond this machine.", &s.cfg_gateway_allow_public_bind);
+    }
+    {
+        const section = settingsSection(c, s, "Memory", "Which engine stores turns, and whether it searches by meaning.");
+        defer section.end();
+        const card = settingsCard(c, s);
+        defer card.end();
+        memoryField(s, c);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Search by meaning", "`memory.search.enabled`: embed and search turns semantically.", &s.cfg_memory_search);
+    }
+    {
+        const section = settingsSection(c, s, "MCP servers", "One per line: `name command`. The agent can call these.");
+        defer section.end();
+        const card = settingsCard(c, s);
         defer card.end();
         mcpField(s, c);
     }
     {
-        const section = configSection(c, s, "Cron", "Whether scheduled tasks run, and how often the scheduler wakes.");
+        const section = settingsSection(c, s, "Schedules", "Whether tasks run on a timer, and how many at once.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
         defer card.end();
-        toggleField(s, c, "Run scheduled tasks", "`cron.enabled`.", &s.cfg_cron_enabled);
-        formField(s, c, "Scheduler interval", "Minutes between ticks, `cron.interval_minutes`.", "30", &s.cfg_cron_interval);
+        settingsSwitch(s, c, "Run scheduled tasks", "`cron.enabled`.", &s.cfg_cron_enabled);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Cron interval", "Minutes between ticks, `cron.interval_minutes`.", "30", &s.cfg_cron_interval);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Scheduler on", "`scheduler.enabled`: the task runner itself.", &s.cfg_scheduler_enabled);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Max tasks", "`scheduler.max_tasks`: how many the runner holds.", "64", &s.cfg_scheduler_max_tasks);
     }
     {
-        const section = configSection(c, s, "Skills", "Installed skills, read from the workspace. Manage them with `nullclaw skills`.");
+        const section = settingsSection(c, s, "Reliability", "How hard a failing provider call is retried.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
+        defer card.end();
+        settingsTextField(s, c, "Provider retries", "`reliability.provider_retries`.", "2", &s.cfg_retries);
+        settingsRule(c, s);
+        settingsTextField(s, c, "Backoff", "`reliability.provider_backoff_ms`: wait between tries.", "500", &s.cfg_backoff_ms);
+    }
+    {
+        const section = settingsSection(c, s, "Diagnostics", "What the runtime records while it works.");
+        defer section.end();
+        const card = settingsCard(c, s);
+        defer card.end();
+        settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
+        settingsRule(c, s);
+        settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
+    }
+    {
+        const section = settingsSection(c, s, "Skills", "Installed skills, read from the workspace. Manage them with `nullclaw skills`.");
+        defer section.end();
+        const card = settingsCard(c, s);
         defer card.end();
         skillsSummary(s, c);
     }
     {
-        const section = configSection(c, s, "Capabilities", "What this build has, and what the config turns on.");
+        const section = settingsSection(c, s, "Capabilities", "What this build has, and what the config turns on.");
         defer section.end();
-        const card = configCard(c, s);
+        const card = settingsCard(c, s);
         defer card.end();
         capabilitiesSummary(s, c);
     }
@@ -1194,11 +1421,9 @@ fn commonConfigForm(s: *AppState, c: *ui.Context) void {
 
 /// The MCP list: one `name command` per line, in a box that grows with it.
 fn mcpField(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsStart();
+    const row = ui.div(c).column().wFull().px(14).py(12).gap(6);
     defer row.end();
-    fieldLabel(c, s, "Servers", "`mcp_servers`. One `name command` per line.");
-    const field = ui.div(c).column().grow().minW(0).gap(4);
-    defer field.end();
+    ui.text(c, "Servers", .{ .size = 12.5, .color = s.palette.text });
     // `bare = false`: the area draws its own box, so a list of servers reads
     // as a field rather than as loose text on the card.
     _ = ui.textArea(c, &s.cfg_mcp_servers, .{
@@ -1271,18 +1496,11 @@ fn capsFact(s: *AppState, c: *ui.Context, label: []const u8, on: usize, total: u
 /// The memory engine pick. A select rather than free text, for the same reason
 /// the provider is one: only an engine the registry registers can load.
 fn memoryField(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().gap(12).itemsCenter();
-    defer row.end();
-    fieldLabel(c, s, "Memory engine", "`memory.backend`.");
-    const field = ui.div(c).grow().minW(0);
-    defer field.end();
     var picked: ?usize = @as(?usize, s.cfg_memory_backend);
-    if (kit.select(c, "memory-backend", &state.memory_backends, &picked, .{
-        .placeholder = "Choose…",
-        .width = field_w,
-    })) {
-        s.cfg_memory_backend = picked orelse 0;
-    }
+    settingsSelect(s, c, "memory-backend", "Engine", "`memory.backend`: which store keeps the turns.", &state.memory_backends, &picked, "Choose…");
+    if (picked) |p| s.cfg_memory_backend = p;
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Save automatically", "`memory.auto_save`: write each turn without being asked.", &s.cfg_memory_auto_save);
 }
 
 /// The pinned action bar: a hairline, the buttons, and one sentence saying
@@ -1353,7 +1571,7 @@ fn advancedSection(s: *AppState, c: *ui.Context) void {
     }
     if (!s.show_advanced_config) return;
     {
-        const section = configSection(c, s, "Advanced", "Set any dotted path directly, or read the whole file as a JSON tree.");
+        const section = settingsSection(c, s, "Advanced", "Set any dotted path directly, or read the whole file as a JSON tree.");
         defer section.end();
         configEditor(s, c);
         jsonView(s, c);
