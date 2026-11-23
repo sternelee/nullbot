@@ -18,6 +18,8 @@ pub const Block = struct {
     spans: []ui.Span = &.{},
     /// 1..6 for a heading, 0 otherwise.
     level: u8 = 0,
+    /// A code block's fence info string (`zig` in ```zig), empty otherwise.
+    lang: []const u8 = "",
 };
 
 pub const Doc = struct {
@@ -53,6 +55,9 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
         if (trimmed.len == 0) continue;
 
         if (std.mem.startsWith(u8, trimmed, "```")) {
+            // The info string after the fence names the language (`zig`).
+            const info = std.mem.trimStart(u8, trimmed[3..], " \t");
+            const lang = if (info.len > 0) try a.dupe(u8, info) else "";
             // Everything up to the closing fence is literal.
             fence.clearRetainingCapacity();
             while (lines.next()) |body| {
@@ -61,7 +66,7 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
                 if (fence.items.len > 0) try fence.append(a, '\n');
                 try fence.appendSlice(a, std.mem.trimEnd(u8, body, "\r"));
             }
-            try blocks.append(a, .{ .kind = .code, .text = fence.items });
+            try blocks.append(a, .{ .kind = .code, .text = fence.items, .lang = lang });
             continue;
         }
 
@@ -294,6 +299,20 @@ test "a fenced block keeps its body literal" {
     try testing.expectEqual(Kind.code, doc.blocks[1].kind);
     try testing.expectEqualStrings("let x = **1**;", textOf(&doc, 1));
     try testing.expectEqual(@as(usize, 0), doc.blocks[1].spans.len);
+}
+
+test "a fenced block keeps its info string as the language" {
+    const src =
+        \\```zig
+        \\const x = 1;
+        \\```
+    ;
+    var doc = try parse(testing.allocator, src);
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 1), doc.blocks.len);
+    try testing.expectEqual(Kind.code, doc.blocks[0].kind);
+    try testing.expectEqualStrings("zig", doc.blocks[0].lang);
+    try testing.expectEqualStrings("const x = 1;", textOf(&doc, 0));
 }
 
 test "an unclosed marker stays literal" {

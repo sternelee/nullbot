@@ -45,21 +45,13 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "01-chat-empty");
 
-    // The "nullclaw ∨" menu open: every non-chat page, including the
-    // configuration editor, is reached from this one collapsible entry.
-    try w.tester.clickText("nullclaw ⌄");
-    w.tester.settle(0.6);
-    try shoot(&w, "01b-brand-menu");
-    w.app.menu_open = false;
+    // The settings menu, reached from the button at the sidebar's foot: the
+    // window's one entry to every page but the conversation.
+    w.app.toggleSettings();
+    w.tester.settle(0.5);
+    try shoot(&w, "01b-settings-menu");
+    w.app.openPage(.chat);
     w.tester.settle(0.3);
-
-    // The palette menu, hung off the footer's palette button. It is view state
-    // rather than a runtime answer, so it is the one popover opened by hand.
-    w.app.theme_menu_open = true;
-    w.tester.settle(0.4);
-    try shoot(&w, "01c-theme-menu");
-    w.app.theme_menu_open = false;
-    w.tester.settle(0.2);
 
     // The settings menu is no longer a shot of its own: `openPage` swaps the
     // sidebar to it for every page but chat, so it is in every settings-page
@@ -126,6 +118,16 @@ test "screenshots" {
     w.app.openPage(.workspace);
     w.settle(1);
     try shoot(&w, "11-workspace");
+
+    // The palette menu, hung off the settings menu's foot. It is view state
+    // rather than a runtime answer, so it is the one popover opened by hand —
+    // and it is the last shot, because a menu that has been opened stays drawn
+    // until its own frame closes it, which would leak into every shot after.
+    w.app.toggleSettings();
+    w.tester.settle(0.4);
+    w.app.theme_menu_open = true;
+    w.tester.settle(0.4);
+    try shoot(&w, "01c-theme-menu");
 
     // A page whose command answered with nothing, which is an answer.
     w.app.openPage(.skills);

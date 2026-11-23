@@ -90,12 +90,17 @@ empty.
   destinations — Chat, Workspace and Settings. The page you are on keeps its
   button lit.
 - **Sidebar**: the conversation list by default — the "nullclaw ⌄" brand menu
-  (every non-chat page, including the configuration editor), a search field, the
-  session list grouped under the day each last spoke, and the footer with the
-  account row and the palette switcher. Pressing the rail's Settings button
-  swaps this for the **settings menu**: a header with a back button, then every
-  settings page grouped Workspace / Runtime / System. Opening a settings page
-  shows the menu; opening the conversation shows the list.
+  (every non-chat page, including the configuration editor), a search field with
+  **Compact / Detailed** and **Grouped / Flat** toggles, the session list grouped
+  by recency (Today / Yesterday / Previous 7 days / Older), and the footer with
+  the account row and the palette switcher. Rows carry a status dot, an optional
+  project monogram, the session key, a stamp and a hover slot to archive, drawn
+  in the design system's spacing and colours (`src/design.zig`). Pressing the
+  rail's Settings button swaps this for the **settings menu**: a header with a
+  back button, a **Search settings** field that filters the pages by label and
+  keyword, then every settings page grouped Workspace / Runtime / System (a
+  query flattens the menu and shows each match with its group). Opening a
+  settings page shows the menu; opening the conversation shows the list.
 - **Body**: a header with the page title and the chat / work mode tabs, the
   page itself, and a banner for the current toast.
 
@@ -161,6 +166,15 @@ directly.
 | `src/contract.zig` | The check that keeps the pages aligned with the runtime |
 | `src/wiring.zig` | The linked-runtime wiring: the memory runtime lives in the struct, not a frame |
 | `src/shot.zig` | The screenshots `zig build shots` writes |
+| `src/design.zig` | The design system: spacing, radius, typography, animation and shadow tokens, an eight-colour project palette (picked by path hash), and the semantic-colour mapping every widget draws from |
+| `src/sidebar/mod.zig` | The conversation sidebar's view state (search buffer, compact/detailed mode, grouping) and its search field, view toggles and recency-grouped list |
+| `src/sidebar/session_row.zig` | One session row: status dot, project monogram, title/preview, stamp and hover slot; plus section headers and the empty state |
+| `src/virtual_list.zig` | A viewport-based list utility (overscan, scroll-to-index, hit testing) for long lists |
+| `src/chat/mod.zig` | The conversation body: a scrolling, centred, selectable transcript of message rows plus the streaming row |
+| `src/chat/message.zig` | One message row: role avatar, name, a copy affordance, the markdown body, and the streaming caret |
+| `src/chat/code_block.zig` | A fenced code block with a header carrying the language and a copy button |
+| `src/composer/mod.zig` | The composer: multi-line input (Return sends, Shift-Return breaks the line), a focus-tinted frame, the model chip, the keyboard hint and the send / stop control |
+| `src/composer/model_chip.zig` | The model chip at the composer's left; click opens Configuration |
 
 ### How a turn and a command run
 

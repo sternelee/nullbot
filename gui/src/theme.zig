@@ -1,3 +1,7 @@
+//! Design system integration for theme
+//!
+//! This file now re-exports design tokens and provides semantic color
+//! building from palettes. The Palette struct is kept for compatibility.
 //! Every colour the GUI uses, in one place, so the dark and light variants
 //! cannot drift apart. `uiTheme` folds a palette into the nanoui theme the
 //! widgets read (`c.theme`).
@@ -272,3 +276,24 @@ test "matrix is the terminal green the web client uses" {
     try testing.expectEqual(Color.hex(0x030a05), matrix.bg);
     try testing.expect(matrix.dark);
 }
+
+// Design system integration
+const design = @import("design.zig");
+
+/// Build semantic colors from a palette (design system integration)
+pub fn buildSemantic(p: Palette) design.SemanticColor {
+    return design.buildSemantic(p);
+}
+
+/// Re-export design tokens for convenience
+pub const Spacing = design.Spacing;
+pub const Radius = design.Radius;
+pub const FontSize = design.FontSize;
+pub const FontWeight = design.FontWeight;
+pub const Animation = design.Animation;
+pub const Easing = design.Easing;
+pub const Shadow = design.Shadow;
+pub const ProjectColor = design.ProjectColor;
+pub const ZIndex = design.ZIndex;
+pub const Breakpoint = design.Breakpoint;
+pub const monogramColor = design.monogramColor;

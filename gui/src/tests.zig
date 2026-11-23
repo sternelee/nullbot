@@ -18,6 +18,15 @@ test {
     _ = @import("contract.zig");
     _ = @import("shot.zig");
     _ = @import("wiring.zig");
+    _ = @import("design.zig");
+    _ = @import("virtual_list.zig");
+    _ = @import("sidebar/mod.zig");
+    _ = @import("sidebar/session_row.zig");
+    _ = @import("chat/mod.zig");
+    _ = @import("chat/message.zig");
+    _ = @import("chat/code_block.zig");
+    _ = @import("composer/mod.zig");
+    _ = @import("composer/model_chip.zig");
 }
 
 test "the window draws its shell, sidebar and composer" {
@@ -27,26 +36,32 @@ test "the window draws its shell, sidebar and composer" {
 
     w.tester.settle(0.5);
     try testing.expect(w.tester.containsText("nullclaw"));
-    try testing.expect(w.tester.hasText("Sessions"));
+    // The zeron-style sidebar: a search field, the compact/grouped toggles,
+    // and the empty-state hint under them.
+    try testing.expect(w.tester.containsText("Search chats"));
+    try testing.expect(w.tester.hasText("Compact"));
     try testing.expect(w.tester.hasText("No sessions yet"));
     try testing.expect(w.tester.hasText("Where should we start?"));
 }
 
-test "the brand menu reaches the configuration page" {
+// The settings button at the sidebar's foot is the one way into every page but
+// the conversation. It swaps the sidebar to the settings menu, and Configuration
+// is the first page listed there.
+test "the settings button reaches the configuration page" {
     var w: Window = undefined;
     try w.init();
     defer w.deinit();
 
     w.tester.settle(0.5);
-    try w.tester.clickText("nullclaw ⌄");
-    w.tester.settle(0.6);
+    w.app.toggleSettings();
+    w.tester.settle(0.5);
     // The menu lists the non-chat pages; Configuration is the one the user
     // asked to move behind a collapsible entry.
     try testing.expect(w.tester.hasText("Configuration"));
     try w.tester.clickText("Configuration");
     w.tester.settle(0.5);
     try testing.expectEqual(state.Page.config, w.app.page);
-    try testing.expect(!w.app.menu_open);
+    try testing.expect(w.app.settings_open);
 }
 
 // The settings button swaps the sidebar to a menu of every settings page,
@@ -61,7 +76,7 @@ test "the settings button swaps the sidebar to the settings menu" {
     w.tester.settle(0.5);
     // The conversation sidebar is what is up before the button is pressed.
     try testing.expect(w.tester.hasText("Search chats"));
-    try testing.expect(w.tester.hasText("Sessions"));
+    try testing.expect(w.tester.hasText("Compact"));
 
     w.app.toggleSettings();
     w.tester.settle(0.5);
@@ -73,7 +88,7 @@ test "the settings button swaps the sidebar to the settings menu" {
     try testing.expect(w.tester.hasText("System"));
     try testing.expect(w.tester.hasText("Channels"));
     try testing.expect(!w.tester.hasText("Search chats"));
-    try testing.expect(!w.tester.hasText("Sessions"));
+    try testing.expect(!w.tester.hasText("Compact"));
     try testing.expectEqual(state.Page.config, w.app.page);
 
     // The back button returns to the conversation.
@@ -101,8 +116,9 @@ test "the settings sidebar keeps its footer pinned on a short window" {
 
     // The footer is on screen, at the foot: before the fix it sat at y=666 on
     // this window, well past the 420px bottom. It need not be a pixel inside
-    // the edge — the row carries bottom padding — only near it.
-    const foot = w.tester.findText("local runtime") orelse return error.NoFooter;
+    // the edge — the row carries bottom padding — only near it. The settings
+    // menu's foot holds the palette picker, named for the palette in use.
+    const foot = w.tester.findText("Neutral") orelse return error.NoFooter;
     try testing.expect(foot.y > 0);
     try testing.expect(foot.y > w.tester.size.h - 60);
     try testing.expect(foot.y < w.tester.size.h);
@@ -155,77 +171,61 @@ test "a session row shows its key and its turns" {
 
     w.tester.settle(0.5);
     try testing.expect(w.tester.hasText("telegram:42"));
-    try testing.expect(w.tester.hasText("3 turns"));
-    // The row sits under the heading for when it last spoke.
-    try testing.expect(w.tester.hasText("Older"));
+    // The row sits under the heading for the channel it came from.
+    try testing.expect(w.tester.hasText("telegram"));
 }
 
-// Sessions are grouped the way the web client groups them, so a long list
-// reads as "when" instead of as one undifferentiated column.
-test "sessions are grouped under the day they last spoke" {
+// Sessions are grouped under the channel they came from, the way zeron groups
+// them under their project, so a long list reads as a few named runs instead of
+// one undifferentiated column.
+test "sessions are grouped under the channel they came from" {
     var w: Window = undefined;
     try w.init();
     defer w.deinit();
 
-    // The grouping is against the clock, so the fresh session is stamped with
-    // today's date rather than with a fixed one that would age out of the
-    // bucket this test is about.
-    const year_day = (std.time.epoch.EpochDay{ .day = @intCast(backend.todayDay(w.app.io)) }).calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const stamp = try std.fmt.allocPrint(testing.allocator, "{d:0>4}-{d:0>2}-{d:0>2}T09:00:00Z", .{
-        year_day.year,
-        @backingInt(month_day.month),
-        month_day.day_index + 1,
-    });
-    defer testing.allocator.free(stamp);
-
     try w.app.sessions.append(testing.allocator, .{
-        .key = try testing.allocator.dupe(u8, "today:1"),
-        .created_at = try testing.allocator.dupe(u8, stamp),
-        .last_active = try testing.allocator.dupe(u8, stamp),
+        .key = try testing.allocator.dupe(u8, "telegram:1"),
+        .created_at = try testing.allocator.dupe(u8, "2026-05-30T14:07:11Z"),
+        .last_active = try testing.allocator.dupe(u8, "2026-05-30T14:09:02Z"),
     });
     try w.app.sessions.append(testing.allocator, .{
-        .key = try testing.allocator.dupe(u8, "stale:2"),
-        .created_at = try testing.allocator.dupe(u8, "2020-01-02T03:04:05Z"),
-        .last_active = try testing.allocator.dupe(u8, "2020-01-02T03:04:05Z"),
+        .key = try testing.allocator.dupe(u8, "discord:2"),
+        .created_at = try testing.allocator.dupe(u8, "2026-05-30T14:07:11Z"),
+        .last_active = try testing.allocator.dupe(u8, "2026-05-30T14:09:02Z"),
     });
 
     w.tester.settle(0.5);
-    try testing.expect(w.tester.hasText("Today"));
-    try testing.expect(w.tester.hasText("Older"));
-    // Newest first: the heading is only useful if the list is in the order the
-    // headings claim.
-    const fresh = w.tester.findText("today:1") orelse return error.NoFreshRow;
-    const stale = w.tester.findText("stale:2") orelse return error.NoStaleRow;
-    try testing.expect(fresh.y < stale.y);
+    // One heading per channel, and the rows under them.
+    try testing.expect(w.tester.hasText("telegram"));
+    try testing.expect(w.tester.hasText("discord"));
+    const tg = w.tester.findText("telegram:1") orelse return error.NoTelegramRow;
+    const dc = w.tester.findText("discord:2") orelse return error.NoDiscordRow;
+    try testing.expect(tg.y != dc.y);
 }
 
-// The strip is a list of distinct places. Two buttons over one page is how it
-// shipped, and it is the kind of thing that comes back by accident.
-test "the rail's destinations are distinct and real" {
-    var seen: [view.rail_entries.len]?state.Page = @splat(null);
-    var new_chat: usize = 0;
-    var settings: usize = 0;
-    for (view.rail_entries, 0..) |entry, i| {
-        try testing.expect(entry.label.len > 0);
-        try testing.expect(entry.icon.len > 0);
-        switch (entry.target) {
-            .new_chat => new_chat += 1,
-            .settings => settings += 1,
-            .page => |page| {
-                for (seen[0..i]) |earlier| {
-                    if (earlier != null and earlier.? == page) return error.DuplicateRailDestination;
-                }
-                seen[i] = page;
-                // A destination the window cannot draw would be a dead button.
-                try testing.expect(std.mem.indexOfScalar(state.Page, &state.nav, page) != null);
-            },
-        }
-    }
-    // Exactly one button starts a conversation, one opens settings, and the
-    // rest are places.
-    try testing.expectEqual(@as(usize, 1), new_chat);
-    try testing.expectEqual(@as(usize, 1), settings);
+// The sidebar's top is the two things you start, and its foot is the one way
+// into settings. Both are rows in the sidebar's own column, not a strip of
+// icons beside it — that strip is what this replaced.
+test "the sidebar starts work at its top and settings at its foot" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+    w.tester.settle(0.5);
+
+    const new_chat = w.tester.findText("New chat") orelse return error.NoNewChat;
+    const search = w.tester.findText("Search") orelse return error.NoSearch;
+    try testing.expect(new_chat.y < search.y);
+
+    // Both sit in the sidebar's column, left of the conversation.
+    try testing.expect(new_chat.x < view.sidebar_width);
+    try testing.expect(search.x < view.sidebar_width);
+
+    // Settings is a button at the foot, below the list.
+    w.app.toggleSettings();
+    w.tester.settle(0.4);
+    try testing.expect(w.app.settings_open);
+    const config = w.tester.findText("Configuration") orelse return error.NoConfigRow;
+    try testing.expect(config.x < view.sidebar_width);
 }
 
 test "the config page opens at its top after a scrolled transcript" {
@@ -376,8 +376,8 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
     w.app.pushMessage("assistant", "an answer");
     w.tester.settle(0.5);
 
-    const brand = w.tester.findText("nullclaw ⌄") orelse return error.NoBrand;
-    const heading = w.tester.findText("Sessions") orelse return error.NoSessions;
+    const brand = w.tester.findText("New chat") orelse return error.NoBrand;
+    const heading = w.tester.findText("Search chats") orelse return error.NoSessions;
     const question = w.tester.findText("a question") orelse return error.NoQuestion;
     const answer = w.tester.findText("an answer") orelse return error.NoAnswer;
     // The hint now leads with the session the message will land in, so it is
@@ -390,12 +390,11 @@ test "the shell puts the sidebar on the left, the transcript beside it, and the 
         break :blk null;
     } orelse return error.NoComposer;
 
-    // The rail is the leftmost strip, then the sidebar: its section heading
-    // starts at the sidebar's own padding, and the brand sits in from there.
-    const left = view.rail_width + view.sidebar_width;
-    try testing.expect(heading.x < brand.x);
+    // The sidebar is the left column, with no icon strip beside it: the new
+    // chat row and the search field both live inside it, left of the transcript.
+    const left = view.sidebar_width;
     try testing.expect(brand.x < left);
-    try testing.expect(heading.x < view.rail_width + view.sidebar_width / 2);
+    try testing.expect(heading.x < left);
 
     // The transcript is the other column: both messages sit right of the
     // rail and sidebar, past the avatar gutter.
@@ -486,6 +485,16 @@ test "a page shows the runtime's rows, and its complaint when there is none" {
 // The single-page test above only covered one page; this walks every page that
 // asks for json and checks its rows are painted below the toolbar, across the
 // pane — geometry that a node-existence query cannot see.
+/// Whether a row's text carries a word: a letter or a digit. A fold marker or a
+/// lone brace is not a row anyone reads, and its width says nothing about the
+/// page's layout.
+fn hasWord(text: []const u8) bool {
+    for (text) |ch| {
+        if (std.ascii.isAlphanumeric(ch)) return true;
+    }
+    return false;
+}
+
 test "every json page paints its rows below the toolbar" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var threaded: std.Io.Threaded = .init(testing.allocator, .{});
@@ -564,14 +573,21 @@ test "every json page paints its rows below the toolbar" {
             for (rows) |other| {
                 if (std.mem.eql(u8, other.text, row.text)) twins += 1;
             }
-            if (twins != 1) continue;
-            const rect = w.tester.findText(row.text) orelse continue;
+            // A row's own text, not a fold marker or a punctuation glyph: those
+            // are a few points wide and say nothing about the page's layout.
+            if (twins != 1 or !hasWord(row.text)) continue;
+            // The tree paints a row as one leaf holding its key and its value
+            // joined, so that joined text — not the key alone — is what to look
+            // for.
+            const painted_text = row.painted(testing.allocator);
+            defer if (painted_text.ptr != row.text.ptr) testing.allocator.free(painted_text);
+            const rect = w.tester.findText(painted_text) orelse continue;
             if (rect.y < toolbar.y + toolbar.h) {
-                std.debug.print("page {s}: row `{s}` sits inside the toolbar\n", .{ @tagName(page), row.text });
+                std.debug.print("page {s}: row `{s}` sits inside the toolbar\n", .{ @tagName(page), painted_text });
                 return error.RowInsideToolbar;
             }
             if (rect.w <= 400) {
-                std.debug.print("page {s}: row `{s}` is {d} wide\n", .{ @tagName(page), row.text, rect.w });
+                std.debug.print("page {s}: row `{s}` is {d} wide\n", .{ @tagName(page), painted_text, rect.w });
                 return error.RowTooNarrow;
             }
             painted = true;

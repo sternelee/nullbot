@@ -10,27 +10,29 @@ const ui = @import("nanoui").ui;
 const kit = @import("nanoui").kit;
 const backend = @import("backend.zig");
 const theme = @import("theme.zig");
-const md = @import("md.zig");
+const design = @import("design.zig");
 const state = @import("state.zig");
-
+const sidebar_mod = @import("sidebar/mod.zig");
+const chat_mod = @import("chat/mod.zig");
+const composer_mod = @import("composer/mod.zig");
 const AppState = state.AppState;
 const Page = state.Page;
 
 /// The hairline icon strip at the far left, like the web client's nav rail.
-pub const rail_width: f32 = 52;
+pub const rail_width: f32 = design.Spacing.rail_width;
 /// Wide enough for a session key and its stamp.
-pub const sidebar_width: f32 = 272;
+pub const sidebar_width: f32 = design.Spacing.sidebar_width;
 /// A comfortable measure for prose, as the runtime's own output is long.
-const content_max: f32 = 768;
+const content_max: f32 = design.Spacing.content_max;
 /// The circular role marker at the head of each message row.
-const avatar_size: f32 = 30;
+const avatar_size: f32 = design.Spacing.avatar_size;
 /// The label column in the configuration form: wide enough that a hint about
 /// a dotted path stays on two lines instead of three.
-const label_w: f32 = 260;
+const label_w: f32 = design.Spacing.label_w;
 /// Every control in the configuration form is this wide, so the card reads as
 /// one column instead of a select at one width and fields stretched to the
 /// card's edge. `kit.select` measures in points, so this is a fixed number.
-const field_w: f32 = 420;
+const field_w: f32 = design.Spacing.field_w;
 
 const suggestions = [_][]const u8{
     "What can you do?",
@@ -44,7 +46,6 @@ pub fn root(s: *AppState, c: *ui.Context) void {
 
     const shell = ui.div(c).row().sizeFull().bg(s.palette.bg);
     defer shell.end();
-    rail(s, c);
     sidebar(s, c);
     _ = c.leaf(.{
         .width = .{ .px = 1 },
@@ -54,77 +55,12 @@ pub fn root(s: *AppState, c: *ui.Context) void {
     body(s, c);
 }
 
-/// The hairline icon strip at the far left, as the web client has it: a new
-/// chat, the conversation, the workspace, and Settings, which swaps the sidebar
-/// to the settings menu. Every button is a place you can actually get to — the
-/// strip used to carry four icons over two pages, so half of it did nothing the
-/// other half had not already done.
-fn rail(s: *AppState, c: *ui.Context) void {
-    const bar = ui.div(c).column().w(rail_width).hFull().bg(s.palette.shell)
-        .itemsCenter().py(12).gap(6);
-    defer bar.end();
-
-    for (rail_entries) |entry| railButton(s, c, entry);
-}
-
-/// What a rail button does: open a page, start a conversation, or open the
-/// settings menu. Only the new-chat button starts a conversation, which is why
-/// the strip is not a page list.
-pub const RailTarget = union(enum) {
-    new_chat,
-    page: Page,
-    /// Swaps the sidebar to the settings menu. Its own target rather than
-    /// `.{ .page = .config }` so the button toggles the menu (and lights while
-    /// it is open) instead of merely landing on the configuration page.
-    settings,
-};
-
-const RailEntry = struct {
-    icon: []const u8,
-    label: []const u8,
-    target: RailTarget,
-};
-
-/// The strip's buttons, top to bottom. They live in a table rather than in the
-/// draw call so that "two buttons, one destination" — the shape the strip
-/// shipped with, where half of it did nothing the other half had not already
-/// done — is something a test can catch instead of something a reader has to
-/// notice.
-pub const rail_entries = [_]RailEntry{
-    .{ .icon = "square.and.pencil", .label = "New chat", .target = .new_chat },
-    .{ .icon = "text.cursor", .label = "Chat", .target = .{ .page = .chat } },
-    .{ .icon = "folder", .label = "Workspace", .target = .{ .page = .workspace } },
-    .{ .icon = "gearshape", .label = "Settings", .target = .settings },
-};
-
-fn railButton(s: *AppState, c: *ui.Context, entry: RailEntry) void {
-    // The page you are on keeps its button lit, so the strip says where you
-    // are rather than only where you could go. The settings button lights
-    // while its menu is open, which is the state it is the entry to.
-    const active = switch (entry.target) {
-        .new_chat => false,
-        .page => |page| s.page == page and !s.settings_open,
-        .settings => s.settings_open,
-    };
-    const it = ui.button(c, "", .{
-        .variant = if (active) .secondary else .ghost,
-        .icon = entry.icon,
-        .size = 16,
-        .width = .{ .px = 36 },
-    });
-    // An icon-only strip has no room to say what a glyph means, so the label
-    // is on the hover instead of nowhere.
-    kit.tooltip(c, it, entry.label, .{});
-    if (!it.clicked) return;
-    switch (entry.target) {
-        .new_chat => s.newChat(),
-        .page => |page| s.openPage(page),
-        .settings => s.toggleSettings(),
-    }
-}
-
 // --- the sidebar ---------------------------------------------------------
 
+/// The window's one sidebar: a conversation list, or the settings menu while
+/// that is open. Zeron's shell has no icon rail beside it — the sidebar runs to
+/// the window's top, its own top holds the two things you start (a new chat and
+/// search), and its foot holds you and the way into settings.
 fn sidebar(s: *AppState, c: *ui.Context) void {
     const bar = ui.div(c).column().w(sidebar_width).hFull().bg(s.palette.shell);
     defer bar.end();
@@ -132,44 +68,149 @@ fn sidebar(s: *AppState, c: *ui.Context) void {
         settingsSidebar(s, c);
         return;
     }
+
+    // Semantic colours the new sidebar draws with.
+    const semantic = theme.buildSemantic(s.palette);
+    const dark = s.palette.dark;
+
     brand(s, c);
-    sessionSearch(s, c);
-    sessionsHeading(s, c);
-    sessionList(s, c);
+    _ = s.sidebar.renderHeader(c, &semantic);
+
+    // The list itself, grouped under the channel each session came from.
+    const picked = s.sidebar.renderList(c, s.sessions.items, s.selected, dark, &semantic, &s.folded_groups);
+    if (picked.clicked) |i| s.select(i);
+    if (picked.fold) |name| {
+        // A heading press folds its group: the first press records it, the
+        // second forgets it again.
+        if (s.folded_groups.contains(name)) {
+            _ = s.folded_groups.remove(name);
+        } else {
+            s.folded_groups.put(s.gpa, name, {}) catch {};
+        }
+        c.changed = true;
+    }
+
     sidebarFooter(s, c);
 }
 
-/// The sidebar while the settings menu is open: a header that says so and a way
-/// back to the conversation, then the settings pages grouped by what they
-/// change. It replaces the conversation list rather than sitting beside it, the
-/// way the web client swaps the sidebar when you open Settings.
+// The sidebar while the settings menu is open: a header that says so and a way
+// back to the conversation, then the settings pages grouped by what they
+// change. It replaces the conversation list rather than sitting beside it, the
+// way the web client swaps the sidebar when you open Settings.
 fn settingsSidebar(s: *AppState, c: *ui.Context) void {
     settingsHeader(s, c);
+    settingsSearchField(s, c);
+
     // The scroller is closed before the footer is drawn. A `defer` here would
     // leave it open for the rest of the function, so the footer — the account
     // row and the palette switcher — would be a child of the scrolling box and
     // scroll away with the list, leaving it off-screen on a short window. The
     // conversation sidebar pins its footer the same way.
+    const query = s.settings_search.text();
     {
         ui.key(c, "settings-scroll");
         const box = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
         defer box.end();
-        for (state.settings_groups) |group| {
-            settingsGroupHeading(s, c, group.title);
-            for (group.pages) |page| settingsRow(s, c, page);
+
+        if (query.len == 0) {
+            for (state.settings_groups) |group| {
+                settingsGroupHeading(s, c, group.title);
+                for (group.pages) |page| settingsRow(s, c, page, null);
+            }
+        } else {
+            // A query flattens the menu: only the pages it matches, each with
+            // the group it belongs to beneath its name.
+            var shown: usize = 0;
+            for (state.settings_groups) |group| {
+                for (group.pages) |page| {
+                    if (!settingsMatches(page, query)) continue;
+                    settingsRow(s, c, page, group.title);
+                    shown += 1;
+                }
+            }
+            if (shown == 0) settingsEmpty(s, c);
         }
     }
-    sidebarFooter(s, c);
+    settingsFooter(s, c);
+}
+
+/// The settings menu's foot: the palette picker, and the way back to the
+/// conversation. Zeron's settings list ends with the same account row its
+/// sidebar has; here the account is the diagnostics panel's, so the foot holds
+/// the one window-wide setting the conversation list does not.
+fn settingsFooter(s: *AppState, c: *ui.Context) void {
+    _ = c.leaf(.{
+        .width = .fill,
+        .height = .{ .px = 1 },
+        .background = s.palette.border,
+    }, .none, null);
+
+    const wrap = ui.div(c).row().wFull().p(10).gap(6).itemsCenter();
+    defer wrap.end();
+
+    ui.key(c, "theme-anchor");
+    const anchor_id = c.peekId(null);
+    const palette = ui.button(c, theme.choices[s.palette_index].name, .{
+        .variant = .ghost,
+        .icon = "circle.lefthalf.filled",
+        .size = 12,
+    });
+    if (palette.clicked) {
+        s.theme_menu_open = !s.theme_menu_open;
+        c.changed = true;
+    }
+    themeMenu(s, c, c.rects.get(anchor_id));
+}
+
+/// The settings menu's search field, under the header. Typing filters the
+/// pages by label and keyword; ⌘F is not wired (there is no global keymap
+/// here), but the field is one Tab from the Back button.
+fn settingsSearchField(s: *AppState, c: *ui.Context) void {
+    const wrap = ui.div(c).column().wFull().px(10).pb(8);
+    defer wrap.end();
+    const field = ui.div(c).row().wFull().h(30).itemsCenter().gap(6)
+        .px(9).rounded(8).bg(s.palette.raised).borderW(1).border(s.palette.border);
+    defer field.end();
+    ui.icon(c, "magnifyingglass", .{ .size = 12, .color = s.palette.faint });
+    _ = ui.textField(c, &s.settings_search, .{
+        .placeholder = "Search settings",
+        .width = .fill,
+        .size = 12,
+        .bare = true,
+        .color = s.palette.text,
+        .placeholder_color = s.palette.faint,
+        .caret_color = s.palette.accent,
+    });
+}
+
+/// Whether a page answers a query: its label or its keywords contain it,
+/// ignoring case.
+fn settingsMatches(page: Page, query: []const u8) bool {
+    return containsIgnoreCase(page.label(), query) or containsIgnoreCase(page.keywords(), query);
+}
+
+fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
+    if (needle.len == 0) return true;
+    if (needle.len > haystack.len) return false;
+    var i: usize = 0;
+    while (i + needle.len <= haystack.len) : (i += 1) {
+        var same = true;
+        for (needle, 0..) |ch, j| {
+            if (std.ascii.toLower(ch) != std.ascii.toLower(haystack[i + j])) {
+                same = false;
+                break;
+            }
+        }
+        if (same) return true;
+    }
+    return false;
 }
 
 /// The menu's header: a back button to the conversation, and the word that says
-/// what this list is. Without the back control the only way out is to guess that
-/// the rail's chat button does it.
+/// what this list is.
 fn settingsHeader(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(10).pt(12).pb(10).gap(8).itemsCenter();
+    const row = ui.div(c).row().wFull().px(10).pt(12).pb(8).gap(8).itemsCenter();
     defer row.end();
-    // A labelled button rather than a bare chevron: an arrow on its own is a
-    // guess, and the label is what a reader can act on.
     const back = ui.button(c, "Back", .{
         .variant = .ghost,
         .icon = "chevron.left",
@@ -192,9 +233,9 @@ fn settingsGroupHeading(s: *AppState, c: *ui.Context, title: []const u8) void {
     });
 }
 
-/// One settings entry: an icon, the page's label, and a lit row when it is the
-/// page on screen.
-fn settingsRow(s: *AppState, c: *ui.Context, page: Page) void {
+/// One settings entry: an icon, the page's label, an optional group subtitle,
+/// and a lit row when it is the page on screen.
+fn settingsRow(s: *AppState, c: *ui.Context, page: Page, group: ?[]const u8) void {
     const active = s.page == page;
     const it = ui.pressable(c, .{
         .direction = .row,
@@ -212,229 +253,87 @@ fn settingsRow(s: *AppState, c: *ui.Context, page: Page) void {
         .frame = 16,
         .color = if (active) s.palette.accent else s.palette.muted,
     });
-    ui.text(c, page.label(), .{
-        .size = 12.5,
-        .weight = if (active) .medium else .regular,
-        .color = if (active) s.palette.text else s.palette.muted,
-    });
+
+    if (group) |g| {
+        const col = ui.div(c).column().grow().minW(0).gap(1);
+        defer col.end();
+        ui.text(c, page.label(), .{
+            .size = 12.5,
+            .weight = .medium,
+            .color = if (active) s.palette.text else s.palette.muted,
+        });
+        ui.text(c, g, .{ .size = 9.5, .color = s.palette.faint });
+    } else {
+        ui.text(c, page.label(), .{
+            .size = 12.5,
+            .weight = if (active) .medium else .regular,
+            .color = if (active) s.palette.text else s.palette.muted,
+        });
+    }
 
     if (it.clicked) s.openPage(page);
 }
 
-/// The window's identity and the entry to every non-chat page. The web client
-/// keeps its settings behind a "ChatGPT ∨" menu; here "nullclaw ∨" opens the
-/// same list, so the sidebar stays a conversation list rather than a second
-/// navigation tree. The new-chat button sits beside it.
+/// The empty state when a query matches no page.
+fn settingsEmpty(s: *AppState, c: *ui.Context) void {
+    const box = ui.div(c).column().wFull().p(10).gap(4);
+    defer box.end();
+    ui.text(c, "No matching settings", .{ .size = 12, .color = s.palette.faint });
+    ui.text(c, "Try a different word.", .{ .size = 11, .color = s.palette.faint });
+}
+
+/// The sidebar's top: the two things you start, as zeron has them — a new chat
+/// and a search, each a full-width row with its glyph and its shortcut. The
+/// brand used to sit here as a dropdown holding every page; that menu is the
+/// settings button's foot now, so this strip is only ever about starting work.
 fn brand(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(12).pt(14).pb(10).gap(6).itemsCenter();
-    defer row.end();
-
-    // A stable key gives the menu a rect to hang from, even on the first frame
-    // before the button has been laid out.
-    ui.key(c, "brand-menu");
-    const anchor_id = c.peekId(null);
-    const trigger = ui.button(c, "nullclaw ⌄", .{
-        .variant = .ghost,
-        .size = 14,
-    });
-    if (trigger.clicked) {
-        s.menu_open = !s.menu_open;
-        c.changed = true;
-    }
-
-    ui.spacer(c);
-    if (ui.button(c, "", .{
-        .variant = .ghost,
-        .icon = "square.and.pencil",
-        .size = 15,
-    }).clicked) {
-        s.newChat();
-    }
-
-    brandMenu(s, c, c.rects.get(anchor_id));
-}
-
-/// All the pages that are not the conversation, grouped. Choosing one closes
-/// the menu and opens that page; the configuration editor is here, as asked.
-fn brandMenu(s: *AppState, c: *ui.Context, anchor: ?ui.Rect) void {
-    var items: [state.nav.len + 1]kit.MenuItem = undefined;
-    var n: usize = 0;
-    items[n] = .{ .separator = true };
-    n += 1;
-    // Skip chat: it is the page you are already on when the menu is open.
-    var pages: [state.nav.len]Page = undefined;
-    var np: usize = 0;
-    for (state.nav) |page| {
-        if (page == .chat) continue;
-        pages[np] = page;
-        np += 1;
-    }
-    for (pages[0..np], 0..) |page, i| {
-        items[n] = .{
-            .label = page.label(),
-            .icon = page.icon(),
-            .checked = s.page == page,
-        };
-        _ = i;
-        n += 1;
-    }
-
-    if (kit.menu(c, "brand-menu-popover", &s.menu_open, anchor, items[0..n], .{
-        .width = 232,
-        .placement = .bottom_start,
-    })) |picked| {
-        // The first item is the separator.
-        if (picked > 0 and picked - 1 < np) s.openPage(pages[picked - 1]);
-    }
-}
-
-/// A filter over the session keys. It never changes which session is selected;
-/// it only decides which rows the list draws this frame.
-fn sessionSearch(s: *AppState, c: *ui.Context) void {
-    const wrap = ui.div(c).column().wFull().px(12).pb(8);
+    const wrap = ui.div(c).column().wFull().px(10).pt(12).pb(4).gap(2);
     defer wrap.end();
-    const field = ui.div(c).row().wFull().gap(7).itemsCenter()
-        .px(9).h(32).rounded(8).bg(s.palette.raised);
-    defer field.end();
-    ui.icon(c, "magnifyingglass", .{ .size = 13, .color = s.palette.faint });
-    _ = ui.textField(c, &s.session_search, .{
-        .placeholder = "Search chats",
-        .width = .{ .px = sidebar_width - 24 - 9 - 13 - 7 },
-        .bare = true,
-        .size = 12,
-        .color = s.palette.text,
-        .caret_color = s.palette.accent,
-    });
+
+    topRow(s, c, "square.and.pencil", "New chat", "⌘N", .new_chat);
+    topRow(s, c, "magnifyingglass", "Search", "⌘K", .search);
 }
 
-fn sessionsHeading(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(16).pt(4).pb(6).gap(8).itemsCenter();
-    defer row.end();
-    ui.text(c, "Sessions", .{
-        .size = 10.5,
-        .weight = .semibold,
-        .color = s.palette.muted,
-        .tracking = 0.8,
-    });
-    ui.spacer(c);
-    ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d}", .{s.sessions.items.len});
-}
+const TopAction = enum { new_chat, search };
 
-/// True when `key` contains the search text, ignoring case. An empty query
-/// matches everything.
-fn matchesSearch(s: *AppState, key: []const u8) bool {
-    const q = s.session_search.text();
-    if (q.len == 0) return true;
-    if (q.len > key.len) return false;
-    var i: usize = 0;
-    while (i + q.len <= key.len) : (i += 1) {
-        var same = true;
-        for (q, 0..) |ch, j| {
-            if (std.ascii.toLower(ch) != std.ascii.toLower(key[i + j])) {
-                same = false;
-                break;
-            }
-        }
-        if (same) return true;
-    }
-    return false;
-}
-
-fn sessionList(s: *AppState, c: *ui.Context) void {
-    ui.key(c, "sessions-scroll");
-    const list = ui.div(c).column().grow().wFull().minW(0).scrollY().gap(2).px(8).pb(6);
-    defer list.end();
-
-    if (s.sessions.items.len == 0) {
-        const empty = ui.div(c).column().wFull().p(10).gap(4);
-        defer empty.end();
-        ui.text(c, "No sessions yet", .{ .size = 12, .color = s.palette.faint });
-        ui.text(c, "Send a message to start one.", .{ .size = 11, .color = s.palette.faint });
-        return;
-    }
-
-    var shown: usize = 0;
-    // Rows are grouped the way a chat client groups them: by how long ago the
-    // conversation was last touched. The heading is drawn when the group
-    // changes and only for rows the search kept, so filtering never leaves a
-    // heading standing over nothing.
-    const today = backend.todayDay(s.io);
-    var group: ?backend.Recency = null;
-    for (s.sessions.items, 0..) |session, i| {
-        if (!matchesSearch(s, session.key)) continue;
-        const recency = backend.recencyOf(session.last_active, today);
-        if (group == null or group.? != recency) {
-            sessionGroupHeading(s, c, recency);
-            group = recency;
-        }
-        sessionRow(s, c, session, i);
-        shown += 1;
-    }
-    if (shown == 0) {
-        const empty = ui.div(c).column().wFull().p(10).gap(4);
-        defer empty.end();
-        ui.text(c, "No matching chats", .{ .size = 12, .color = s.palette.faint });
-    }
-}
-
-/// The heading over a run of conversations from the same stretch of time.
-fn sessionGroupHeading(s: *AppState, c: *ui.Context, recency: backend.Recency) void {
-    const row = ui.div(c).row().wFull().px(10).pt(10).pb(3);
-    defer row.end();
-    ui.text(c, recency.label(), .{
-        .size = 10.5,
-        .weight = .semibold,
-        .color = s.palette.faint,
-    });
-}
-
-fn sessionRow(s: *AppState, c: *ui.Context, session: backend.Session, index: usize) void {
-    const selected = s.selected != null and s.selected.? == index;
+fn topRow(s: *AppState, c: *ui.Context, icon: []const u8, label: []const u8, key: []const u8, action: TopAction) void {
     const it = ui.pressable(c, .{
         .direction = .row,
         .width = .fill,
-        .gap = 9,
+        .height = .{ .px = 30 },
+        .gap = 8,
+        .padding = .xy(8, 0),
+        .radius = 7,
         .align_items = .center,
-        .padding = .xy(10, 8),
-        .radius = 8,
-        .background = if (selected) s.palette.raised else s.palette.shell,
     }, s.palette.hover);
     defer ui.end(c);
 
-    const dot = ui.div(c).w(7).h(7).roundedFull()
-        .bg(if (selected) s.palette.accent else s.palette.border);
-    defer dot.end();
-
-    // Two lines so the key gets the whole row's width: with the stamp on the
-    // same line the middle-truncation cut short keys like "telegram:42".
-    const text_col = ui.div(c).column().grow().minW(0).gap(3);
-    defer text_col.end();
-    clipped(c, session.key, .{
-        .size = 12,
-        .color = if (selected) s.palette.text else s.palette.muted,
-        .truncate = .middle,
-    });
-
-    const meta = ui.div(c).row().wFull().gap(6).itemsCenter();
-    defer meta.end();
-    ui.textf(c, .{ .size = 10, .color = s.palette.faint, .tabular = true }, "{d} turns", .{session.turns()});
+    ui.icon(c, icon, .{ .size = 15, .frame = 18, .color = s.palette.muted });
+    ui.text(c, label, .{ .size = 13, .weight = .medium, .color = s.palette.text });
     ui.spacer(c);
-    ui.text(c, backend.formatStamp(c.alloc(), session.last_active), .{
-        .size = 9.5,
-        .color = s.palette.faint,
-        .tabular = true,
-    });
+    ui.text(c, key, .{ .size = 10.5, .color = s.palette.faint, .tabular = true });
 
-    if (it.clicked and !selected) s.select(index);
+    if (!it.clicked) return;
+    switch (action) {
+        .new_chat => s.newChat(),
+        .search => s.focusSearch(),
+    }
 }
 
-/// The sidebar's foot: who you are, and the palette picker. The web client
-/// puts an account row here, so this is one too — the initials disc and the
-/// runtime's name on the left, opening the diagnostics panel, with the palette
-/// behind a single icon. The bare select that used to sit here read as a form
-/// control that had lost its label, in the one strip of the window that is a
-/// status bar rather than a form.
+/// The sidebar's foot, as zeron's: you on the left (your avatar and the
+/// runtime's name), and beside you the button into settings. That button is the
+/// one entry to every page but the conversation — it swaps this sidebar to the
+/// settings menu — which is what the user asked for: settings behind a button
+/// at the foot of the sidebar, not a permanent strip of icons.
 fn sidebarFooter(s: *AppState, c: *ui.Context) void {
+    // The foot asks for a minimum height of its own. nanoui has no flex-shrink,
+    // so a column hands each child the height it measured — and the list's
+    // `grow` was taking the foot's room with it, leaving the account row cut in
+    // half at the window's edge.
+    const foot = ui.div(c).column().wFull();
+    c.node(foot.index).style.min_height = 46;
+    defer foot.end();
+
     _ = c.leaf(.{
         .width = .fill,
         .height = .{ .px = 1 },
@@ -454,25 +353,39 @@ fn sidebarFooter(s: *AppState, c: *ui.Context) void {
         .radius = 8,
     }, s.palette.hover);
     defer ui.end(c);
-    const disc = ui.div(c).w(24).h(24).roundedFull().bg(s.palette.accent).center();
-    defer disc.end();
-    ui.text(c, "N", .{ .size = 11, .weight = .semibold, .color = s.palette.accent_text });
-    const who = ui.div(c).column().grow().minW(0).gap(1);
-    defer who.end();
-    clipped(c, "nullclaw", .{ .size = 12, .color = s.palette.text, .truncate = .ellipsis });
-    ui.text(c, "local runtime", .{ .size = 10, .color = s.palette.faint });
+    {
+        const disc = ui.div(c).w(24).h(24).roundedFull().bg(s.palette.accent).center();
+        defer disc.end();
+        ui.text(c, "N", .{ .size = 11, .weight = .semibold, .color = s.palette.accent_text });
+    }
+    // The name column takes the room the disc and the settings button leave.
+    // `grow` is enough here: a `minW(0)` minimum collapsed the column and the
+    // row's leftover room came out negative, which placed the name at a
+    // negative x and pushed the settings button past the window's edge.
+    {
+        // Closed here rather than by a `defer`: a deferred `end` runs at the end
+        // of the function, so the settings button below would have been laid
+        // out inside this column instead of beside it.
+        const who = ui.div(c).column().grow().gap(1);
+        defer who.end();
+        clipped(c, "nullclaw", .{ .size = 12, .color = s.palette.text, .truncate = .ellipsis });
+        ui.text(c, "local runtime", .{ .size = 10, .color = s.palette.faint });
+    }
     if (row.clicked) s.diagnostics_open = true;
 
-    const palette = kit.iconButton(c, "circle.lefthalf.filled", .{ .size = .sm });
-    kit.tooltip(c, palette, "Palette", .{});
-    if (palette.clicked) {
-        s.theme_menu_open = !s.theme_menu_open;
-        c.changed = true;
-    }
-    themeMenu(s, c, palette.rect);
+    // The settings button, lit while its menu is open: the state it is the
+    // entry to, not just the page it lands on.
+    const gear = ui.button(c, "", .{
+        .variant = if (s.settings_open) .secondary else .ghost,
+        .icon = "gearshape",
+        .size = 14,
+        .width = .{ .px = 30 },
+    });
+    kit.tooltip(c, gear, "Settings", .{});
+    if (gear.clicked) s.toggleSettings();
 }
 
-/// The palette list, hung off the footer's palette button. A menu rather than
+/// The palette list, hung off the settings sidebar's foot. A menu rather than
 /// a select: the choice is a window-wide setting, not a field of the page.
 fn themeMenu(s: *AppState, c: *ui.Context, anchor: ?ui.Rect) void {
     var items: [theme.choices.len]kit.MenuItem = undefined;
@@ -655,8 +568,8 @@ fn chat(s: *AppState, c: *ui.Context) void {
         // the suggestions below it — the web client's arrangement.
         emptyChat(s, c);
     } else {
-        transcript(s, c);
-        composer(s, c);
+        chat_mod.renderTranscript(s, c);
+        composer_mod.render(s, c);
         disclaimer(s, c);
     }
 }
@@ -688,7 +601,7 @@ fn emptyChat(s: *AppState, c: *ui.Context) void {
     });
 
     // The composer sits directly under the question, then the suggestions.
-    composer(s, c);
+    composer_mod.render(s, c);
 
     const list = ui.div(c).column().wFull().gap(2).pt(4);
     defer list.end();
@@ -714,296 +627,9 @@ fn suggestionRow(s: *AppState, c: *ui.Context, prompt: []const u8) void {
     }
 }
 
-fn transcript(s: *AppState, c: *ui.Context) void {
-    // A stable key keeps this box's scroll offset its own. Without one the
-    // transcript and the configuration page's scroller — both the first child
-    // of the body column — resolve to the same id, so the transcript's
-    // follow-to-end offset carried into the config page and opened it scrolled
-    // past its first section.
-    ui.key(c, "transcript-scroll");
-    const box = ui.div(c).column().grow().minW(0).wFull().scrollY().px(22).py(18);
-    // The newest turn is the one you want to read.
-    box.c.node(box.index).style.follow_end = true;
-    defer box.end();
-
-    const centre = ui.div(c).row().wFull().justifyCenter();
-    defer centre.end();
-    const column = ui.div(c).column().wFull().maxW(content_max).gap(22);
-    defer column.end();
-
-    for (s.messages.items, 0..) |message, i| {
-        const doc: ?*const md.Doc = if (i < s.docs.items.len) &s.docs.items[i] else null;
-        messageRow(s, c, message, doc);
-    }
-
-    if (s.streaming()) streamingRow(s, c);
-}
-
-/// A message as a full-width row: a role marker on the left, the answer on the
-/// right. Nothing is right-aligned and assistant prose has no bubble, so a
-/// long answer reads like a page rather than a chat log.
-fn messageRow(s: *AppState, c: *ui.Context, message: backend.Message, doc: ?*const md.Doc) void {
-    const is_user = message.isUser();
-    const is_error = std.mem.eql(u8, message.role, "error");
-
-    const row = ui.div(c).row().wFull().gap(14).itemsStart();
-    defer row.end();
-
-    roleAvatar(s, c, is_user, is_error);
-
-    const content = ui.div(c).column().grow().minW(0).gap(8).pt(3);
-    defer content.end();
-
-    ui.text(c, if (is_user) "You" else if (is_error) "Error" else "nullclaw", .{
-        .size = 12,
-        .weight = .semibold,
-        .color = if (is_error) s.palette.danger else s.palette.muted,
-    });
-
-    if (is_error) {
-        const lead = ui.div(c).row().gap(7).itemsCenter();
-        defer lead.end();
-        ui.icon(c, "exclamationmark.triangle.fill", .{ .size = 12, .color = s.palette.danger });
-        ui.text(c, "could not run", .{ .size = 12, .weight = .medium, .color = s.palette.danger });
-    }
-
-    // The user's turn gets a soft block; the assistant's sits on the page.
-    const message_body = if (is_user)
-        ui.div(c).column().wFull().p(12).rounded(12).bg(s.palette.user_bubble)
-    else
-        ui.div(c).column().wFull();
-    defer message_body.end();
-
-    if (doc) |d| {
-        for (d.blocks) |block| block_(s, c, block);
-    } else {
-        ui.text(c, message.content, .{ .size = 14, .color = s.palette.text, .wrap = true, .leading = 1.55 });
-    }
-
-    if (message.created_at.len > 0) {
-        ui.text(c, backend.formatStamp(c.alloc(), message.created_at), .{
-            .size = 10,
-            .color = s.palette.faint,
-            .tabular = true,
-        });
-    }
-}
-
-/// The circular marker beside a message. The assistant gets its sparkle; a
-/// person gets a neutral silhouette; an error gets a warning tint.
-fn roleAvatar(s: *AppState, c: *ui.Context, is_user: bool, is_error: bool) void {
-    const bg = if (is_error)
-        s.palette.danger.alpha(0.18)
-    else if (is_user)
-        s.palette.raised
-    else
-        s.palette.accent.alpha(0.16);
-    const dot = ui.div(c).w(avatar_size).h(avatar_size).roundedFull().bg(bg).center();
-    defer dot.end();
-    if (is_user) {
-        ui.icon(c, "person.fill", .{ .size = 15, .color = s.palette.muted });
-    } else if (is_error) {
-        ui.icon(c, "exclamationmark.triangle.fill", .{ .size = 15, .color = s.palette.danger });
-    } else {
-        ui.icon(c, "sparkles", .{ .size = 15, .color = s.palette.accent });
-    }
-}
-
-/// The answer as it arrives: the same row, with a blinking caret at the end.
-fn streamingRow(s: *AppState, c: *ui.Context) void {
-    const doc: ?*const md.Doc = if (s.stream_doc) |*d| d else null;
-    const row = ui.div(c).row().wFull().gap(14).itemsStart();
-    defer row.end();
-
-    roleAvatar(s, c, false, false);
-
-    const content = ui.div(c).column().grow().minW(0).gap(8).pt(3);
-    defer content.end();
-    ui.text(c, "nullclaw", .{ .size = 12, .weight = .semibold, .color = s.palette.muted });
-
-    if (doc) |d| {
-        for (d.blocks) |block| block_(s, c, block);
-    } else {
-        ui.text(c, s.stream_text.items, .{ .size = 14, .color = s.palette.text, .wrap = true, .leading = 1.55 });
-    }
-
-    const blink = @mod(c.time, 1.0) < 0.55;
-    var caret_box = ui.div(c).w(7).h(15);
-    if (blink) caret_box = caret_box.rounded(2).bg(s.palette.accent);
-    caret_box.end();
-}
-
-fn block_(s: *AppState, c: *ui.Context, block: md.Block) void {
-    switch (block.kind) {
-        .rule => {
-            _ = c.leaf(.{
-                .width = .fill,
-                .height = .{ .px = 1 },
-                .background = s.palette.border,
-            }, .none, null);
-        },
-        .code => {
-            const box = ui.div(c).column().wFull().p(10).rounded(8).bg(s.palette.code_bg);
-            defer box.end();
-            ui.text(c, block.text, blockStyle(s, block));
-        },
-        .quote => {
-            const row = ui.div(c).row().wFull().gap(9);
-            defer row.end();
-            _ = c.leaf(.{
-                .width = .{ .px = 2 },
-                .height = .fill,
-                .background = s.palette.accent.alpha(0.6),
-            }, .none, null);
-            ui.text(c, block.text, blockStyle(s, block));
-        },
-        .bullet => {
-            const row = ui.div(c).row().wFull().gap(7);
-            defer row.end();
-            ui.text(c, "•", .{ .size = 13.5, .color = s.palette.muted });
-            ui.text(c, block.text, blockStyle(s, block));
-        },
-        .heading, .paragraph => {
-            ui.richText(c, block.text, block.spans, blockStyle(s, block));
-        },
-    }
-}
-
-fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
-    return switch (block.kind) {
-        .heading => .{
-            .size = switch (block.level) {
-                1 => 17,
-                2 => 15.5,
-                3 => 14.5,
-                else => 13.5,
-            },
-            .weight = .semibold,
-            .color = s.palette.text,
-            .wrap = true,
-            .leading = 1.35,
-        },
-        .code => .{ .size = 12, .mono = true, .color = s.palette.text, .wrap = true, .leading = 1.45 },
-        .quote => .{ .size = 13.5, .italic = true, .color = s.palette.muted, .wrap = true, .leading = 1.45 },
-        .bullet => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },
-        .rule => .{ .size = 13.5, .color = s.palette.faint, .wrap = true },
-        .paragraph => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },
-    };
-}
-
 /// How wide a bubble wants to be: as wide as its widest line, up to a share of
 /// the column. Measuring before laying out keeps a short reply a short bubble
 /// instead of a full-width band.
-fn composer(s: *AppState, c: *ui.Context) void {
-    // In the empty state the composer is already inside a centred column, so
-    // it drops its own outer padding; in a conversation it pins to the foot.
-    const compact = s.messages.items.len == 0 and !s.streaming();
-    const centre = if (compact)
-        ui.div(c).row().wFull()
-    else
-        ui.div(c).row().wFull().justifyCenter().px(22).pt(8).pb(20);
-    defer centre.end();
-    const column = ui.div(c).column().wFull().maxW(content_max).gap(8);
-    defer column.end();
-
-    const box = ui.div(c).column().wFull().p(12).gap(6).bg(s.palette.panel)
-        .border(s.palette.border).borderW(1).rounded(18);
-    defer box.end();
-
-    const typed = ui.textArea(c, &s.composer, .{
-        .placeholder = if (s.selected == null) "Ask anything…" else "Message nullclaw…",
-        .min_lines = 1,
-        .max_lines = 8,
-        .size = 14,
-        .color = s.palette.text,
-        .caret_color = s.palette.accent,
-    });
-
-    const foot = ui.div(c).row().wFull().gap(8).itemsCenter();
-    defer foot.end();
-    // The model chip goes hard left, where the web client puts its model
-    // picker, with the keyboard hint at the right beside the send control.
-    modelChip(s, c);
-    ui.spacer(c);
-    composerHint(s, c);
-
-    if (s.sending) {
-        const writing = ui.div(c).row().gap(6).itemsCenter();
-        defer writing.end();
-        ui.icon(c, "ellipsis.circle", .{ .size = 12, .color = s.palette.accent });
-        ui.text(c, if (s.streaming()) "writing…" else "thinking…", .{
-            .size = 11.5,
-            .color = s.palette.accent,
-        });
-        // A long answer with no way out is the one thing a chat must not do.
-        const halt = ui.button(c, "", .{
-            .variant = .secondary,
-            .icon = "stop.circle",
-            .size = 12,
-        });
-        if (halt.clicked) s.stop();
-        return;
-    }
-
-    // The round send control: an accent disc with an up arrow, the shape
-    // people now expect from a chat composer.
-    const can_send = s.composer.text().len != 0;
-    const send = ui.pressable(c, .{
-        .direction = .row,
-        .width = .{ .px = 34 },
-        .height = .{ .px = 34 },
-        .radius = 17,
-        .justify = .center,
-        .align_items = .center,
-        .background = if (can_send) s.palette.accent else s.palette.raised,
-    }, s.palette.hover);
-    defer ui.end(c);
-    ui.icon(c, "arrow.up", .{ .size = 16, .color = if (can_send) s.palette.accent_text else s.palette.faint });
-    if (send.clicked and can_send) s.send();
-    _ = typed;
-}
-
-/// The model the next turn will use, as a chip at the composer's left, where
-/// the web client puts its model picker. It names a setting, so clicking it
-/// opens the page that sets it rather than a picker of its own; a config that
-/// names no model draws no chip rather than a guess.
-fn modelChip(s: *AppState, c: *ui.Context) void {
-    const full = s.modelLabel();
-    if (full.len == 0) return;
-    // The config names the model as `provider/model`; the chip shows the model
-    // the way the web client's picker does, and keeps the provider for the
-    // tooltip, which is where a name like "openrouter" belongs.
-    const model = if (std.mem.indexOfScalar(u8, full, '/')) |slash| full[slash + 1 ..] else full;
-    if (model.len == 0) return;
-    const it = ui.pressable(c, .{
-        .direction = .row,
-        .gap = 6,
-        .min_width = 0,
-        .max_width = 220,
-        .padding = .xy(9, 4),
-        .radius = 999,
-        .align_items = .center,
-        .background = s.palette.raised,
-    }, s.palette.hover);
-    defer ui.end(c);
-    ui.icon(c, "cpu", .{ .size = 11, .color = s.palette.faint });
-    clipped(c, model, .{ .size = 11, .color = s.palette.muted, .truncate = .ellipsis });
-    kit.tooltip(c, it, c.print("{s} · open Configuration", .{full}), .{});
-    if (it.clicked) s.openPage(.config);
-}
-
-fn composerHint(s: *AppState, c: *ui.Context) void {
-    const typed = s.composer.text();
-    if (typed.len == 0) {
-        // Keep "return to send" as the stable anchor for tests and for anyone
-        // who wonders why Return submits; lead with where the turn will land.
-        const where = s.turnSession() orelse "new conversation";
-        ui.textf(c, .{ .size = 10.5, .color = s.palette.faint }, "{s} · return to send · shift-return for a new line", .{where});
-        return;
-    }
-    ui.textf(c, .{ .size = 10.5, .color = s.palette.faint, .tabular = true }, "{d} characters", .{typed.len});
-}
-
 // --- the runtime pages ---------------------------------------------------
 
 fn jsonPage(s: *AppState, c: *ui.Context) void {
@@ -1017,7 +643,10 @@ fn jsonPage(s: *AppState, c: *ui.Context) void {
     // height from one, and `hFull` so the list has a height to fill.
     const outer = ui.div(c).column().grow().minW(0).wFull().px(22).pb(16);
     defer outer.end();
-    const box = ui.div(c).column().hFull().wFull().maxW(content_max).gap(10);
+    // A fixed measure, as the transcript uses: `wFull().maxW(...)` inside a
+    // column left the box with no width of its own, and its rows were laid out
+    // at a few points wide.
+    const box = ui.div(c).column().hFull().w(content_max).gap(10);
     defer box.end();
     jsonView(s, c);
 }
@@ -1785,7 +1414,10 @@ fn banner(s: *AppState, c: *ui.Context) void {
 /// Text in a box that fills its parent, so `truncate` has an edge to cut at.
 /// `ui.text` sizes itself to its content, which never truncates.
 fn clipped(c: *ui.Context, str: []const u8, style: ui.TextStyle) void {
-    _ = c.leaf(.{ .width = .fill }, .{ .text = .{
+    // `.auto` rather than `.fill`: a filled leaf inside a growing column is
+    // measured before that column has a width, so the text was laid out one
+    // character per line and the row grew to sixty points tall.
+    _ = c.leaf(.{ .width = .auto }, .{ .text = .{
         .str = str,
         .style = style,
         .color = style.color orelse c.theme.text,

@@ -9,7 +9,7 @@ const yc = @import("nullclaw");
 const md = @import("md.zig");
 const runtime = @import("runtime.zig");
 const theme = @import("theme.zig");
-
+const sidebar = @import("sidebar/mod.zig");
 pub const Io = std.Io;
 
 /// The page the main area shows. Everything but `chat` and `config` is a
@@ -115,6 +115,29 @@ pub const Page = enum {
         return switch (self) {
             .chat, .auth, .hardware, .update, .service => false,
             else => true,
+        };
+    }
+
+    /// Extra words the settings search accepts for this page, beyond its
+    /// label: the concepts people type for it.
+    pub fn keywords(self: Page) []const u8 {
+        return switch (self) {
+            .chat => "conversation message",
+            .config => "configuration settings provider model api key gateway workspace mcp cron skills",
+            .status => "status health uptime",
+            .capabilities => "capabilities channels tools memory engines",
+            .models => "models provider model summary",
+            .memory => "memory engine store backend",
+            .skills => "skills plugins",
+            .channels => "channels telegram discord signal slack whatsapp email",
+            .cron => "cron schedule jobs tasks",
+            .mcp => "mcp servers tools protocol",
+            .auth => "auth login oauth codex credentials token",
+            .workspace => "workspace files audit directory",
+            .hardware => "hardware peripherals devices scan",
+            .service => "service daemon launchd systemd",
+            .update => "update upgrade version release",
+            .doctor => "doctor diagnostics check health",
         };
     }
 };
@@ -225,9 +248,9 @@ pub const AppState = struct {
     /// The sidebar's rows.
     sessions: std.ArrayListUnmanaged(backend.Session) = .empty,
     selected: ?usize = null,
-    /// Filters the session list by key. A view-only concern: it never changes
-    /// `selected`, which stays an index into `sessions` itself.
-    session_search: ui.TextBuffer = .{},
+    /// The conversation sidebar's own view state: its search buffer, row
+    /// mode, and grouping. The sessions themselves live in `sessions`.
+    sidebar: sidebar.Sidebar = .{},
     /// The selected session's transcript, and each message's reply parsed for
     /// drawing. Parsing is cached here so a frame never re-reads markdown.
     messages: std.ArrayListUnmanaged(backend.Message) = .empty,
@@ -247,8 +270,15 @@ pub const AppState = struct {
 
     /// What the user is typing.
     composer: ui.TextBuffer = .{},
+    /// Whether the composer had the keyboard last frame: the frame tints its
+    /// border from this, so a focused input reads as live.
+    composer_focused: bool = false,
     /// A turn is in flight.
     sending: bool = false,
+
+    /// The settings menu's search field. A query filters the pages by label
+    /// and keyword; an empty query draws the grouped menu.
+    settings_search: ui.TextBuffer = .{},
 
     page: Page = .chat,
 
@@ -323,6 +353,11 @@ pub const AppState = struct {
     /// The "nullclaw ∨" menu beside the brand. Every non-chat page lives in
     /// it, so the sidebar stays a list of conversations, like the web client.
     menu_open: bool = false,
+    /// Which project groups in the sidebar are folded shut, by group name.
+    /// Zeron's sidebar groups sessions under their project and lets each group
+    /// fold; this is that fold, kept per group so one closing leaves the rest
+    /// as they were.
+    folded_groups: std.StringHashMapUnmanaged(void) = .empty,
     /// The top-of-page mode switch. Chat is the conversation; Work is the
     /// runtime's tools. Work opens the first tool page when chosen.
     active_tab: enum { chat, work } = .chat,
@@ -399,7 +434,8 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
-        self.session_search.deinit();
+        self.sidebar.search.deinit();
+        self.settings_search.deinit();
         self.stream_text.deinit(self.gpa);
         self.draft_session.deinit(self.gpa);
         if (self.stream_doc) |*d| d.deinit();
@@ -899,6 +935,13 @@ pub const AppState = struct {
         // conversation list, which is what the sidebar shows again.
         self.settings_open = false;
         self.makeDraftSession();
+    }
+
+    /// Puts the cursor in the sidebar's search field. The field is drawn every
+    /// frame, so asking it to take focus is a flag the next frame reads rather
+    /// than a call that can happen here.
+    pub fn focusSearch(self: *AppState) void {
+        self.sidebar.search.want_focus = true;
     }
 
     /// Swaps the sidebar to the settings menu, or back. The settings button on
