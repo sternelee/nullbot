@@ -203,6 +203,29 @@ test "sessions are grouped under the channel they came from" {
     try testing.expect(tg.y != dc.y);
 }
 
+// The chat / work switch belongs to the conversation. With a settings page
+// open the sidebar's own menu is where you move between pages, so the switch
+// would be a second control saying what the sidebar already says.
+test "the mode switch is only on the conversation" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.hasText("Chat"));
+    try testing.expect(w.tester.hasText("Work"));
+
+    // Any settings page: the switch goes, the sidebar's menu takes over.
+    w.app.openPage(.config);
+    w.tester.settle(0.5);
+    try testing.expect(!w.tester.hasText("Work"));
+
+    // Back on the conversation it returns.
+    w.app.openPage(.chat);
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("Work"));
+}
+
 // Regression: the window's title bar is hidden, so the traffic lights float
 // over the view. The sidebar's first row started at 12 points and drew under
 // them. It now starts past the strip they sit in, and the page header starts at

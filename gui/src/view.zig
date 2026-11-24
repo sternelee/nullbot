@@ -516,9 +516,11 @@ fn header(s: *AppState, c: *ui.Context) void {
         clipped(c, subtitle(s, c), .{ .size = 11, .color = s.palette.faint, .truncate = .middle });
     }
 
-    // The chat / work switch, centred like the web client's mode tabs. Work
-    // opens the configuration editor, the gateway into every runtime tool.
-    modeTabs(s, c);
+    // The chat / work switch, centred like the web client's mode tabs, and only
+    // on the conversation. Once a settings page is open the sidebar's own menu
+    // is where you move between pages, so a second switch beside the title only
+    // repeats what the sidebar already says.
+    if (s.page == .chat) modeTabs(s, c);
 
     ui.spacer(c);
     if (s.busy()) {
