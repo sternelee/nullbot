@@ -19,6 +19,16 @@ const AppState = state.AppState;
 const Page = state.Page;
 
 /// The hairline icon strip at the far left, like the web client's nav rail.
+/// The strip the window's traffic lights sit in, from the window's top. The
+/// window is created with a hidden title bar and the buttons placed at
+/// `y = 26`, which makes the bar 52 points tall (`main.zig`). The sidebar's
+/// first row starts below it, so nothing is drawn under the buttons.
+pub const title_bar_height: f32 = 52;
+
+/// The gap between that strip and the sidebar's first row. The traffic lights
+/// end at 52, and a row starting exactly there reads as crowding them.
+const title_bar_gap: f32 = 8;
+
 pub const rail_width: f32 = design.Spacing.rail_width;
 /// Wide enough for a session key and its stamp.
 pub const sidebar_width: f32 = design.Spacing.sidebar_width;
@@ -209,7 +219,9 @@ fn containsIgnoreCase(haystack: []const u8, needle: []const u8) bool {
 /// The menu's header: a back button to the conversation, and the word that says
 /// what this list is.
 fn settingsHeader(s: *AppState, c: *ui.Context) void {
-    const row = ui.div(c).row().wFull().px(10).pt(12).pb(8).gap(8).itemsCenter();
+    // The same strip the conversation sidebar leaves: the settings menu swaps
+    // in under the same traffic lights.
+    const row = ui.div(c).row().wFull().px(10).pt(title_bar_height + title_bar_gap).pb(8).gap(8).itemsCenter();
     defer row.end();
     const back = ui.button(c, "Back", .{
         .variant = .ghost,
@@ -287,7 +299,10 @@ fn settingsEmpty(s: *AppState, c: *ui.Context) void {
 /// brand used to sit here as a dropdown holding every page; that menu is the
 /// settings button's foot now, so this strip is only ever about starting work.
 fn brand(s: *AppState, c: *ui.Context) void {
-    const wrap = ui.div(c).column().wFull().px(10).pt(12).pb(4).gap(2);
+    // Below the traffic lights, not under them: the window's title bar is
+    // hidden, so the buttons float over the view and the sidebar's first row
+    // has to start past them.
+    const wrap = ui.div(c).column().wFull().px(10).pt(title_bar_height + title_bar_gap).pb(4).gap(2);
     defer wrap.end();
 
     topRow(s, c, "square.and.pencil", "New chat", "⌘N", .new_chat);
@@ -489,7 +504,9 @@ fn body(s: *AppState, c: *ui.Context) void {
 }
 
 fn header(s: *AppState, c: *ui.Context) void {
-    const bar = ui.div(c).row().wFull().px(22).pt(14).pb(10).gap(12).itemsCenter();
+    // Level with the sidebar's first row: the traffic lights sit over both
+    // columns, so the page's title starts at the same y as New chat.
+    const bar = ui.div(c).row().wFull().px(22).pt(title_bar_height + title_bar_gap).pb(10).gap(12).itemsCenter();
     defer bar.end();
 
     {

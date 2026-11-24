@@ -203,6 +203,35 @@ test "sessions are grouped under the channel they came from" {
     try testing.expect(tg.y != dc.y);
 }
 
+// Regression: the window's title bar is hidden, so the traffic lights float
+// over the view. The sidebar's first row started at 12 points and drew under
+// them. It now starts past the strip they sit in, and the page header starts at
+// the same y so the two columns read as one line.
+test "the sidebar and the header start below the traffic lights" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+    w.tester.settle(0.5);
+
+    const new_chat = w.tester.findText("New chat") orelse return error.NoNewChat;
+    // The strip is 52 points tall (the buttons' centre at 26). A row that
+    // starts at its top edge or above would be drawn under the buttons.
+    try testing.expect(new_chat.y >= view.title_bar_height);
+
+    // The page's own title is level with it, not higher: two columns whose
+    // first lines disagree read as two windows.
+    w.app.pushMessage("user", "a question");
+    w.tester.settle(0.4);
+    const title = w.tester.findText("Chat") orelse return error.NoTitle;
+    try testing.expect(@abs(title.y - new_chat.y) < 20);
+
+    // The settings menu swaps in under the same strip.
+    w.app.toggleSettings();
+    w.tester.settle(0.4);
+    const back = w.tester.findText("Back") orelse return error.NoBack;
+    try testing.expect(back.y >= view.title_bar_height);
+}
+
 // The sidebar's top is the two things you start, and its foot is the one way
 // into settings. Both are rows in the sidebar's own column, not a strip of
 // icons beside it — that strip is what this replaced.

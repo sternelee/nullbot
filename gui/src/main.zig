@@ -37,6 +37,11 @@ pub fn main(init: std.process.Init) !void {
         .min_width = 760,
         .min_height = 520,
         .title_bar = .hidden,
+        // The traffic lights sit in a bar of their own, and the sidebar's top
+        // rows start below it rather than under the buttons. `y` is the close
+        // button's centre from the window's top, and the bar grows to twice it
+        // — 52 points, which is what `view.title_bar_height` reserves.
+        .traffic_lights = .{ .x = 26, .y = 26 },
         .theme = theme.uiTheme(app_state.palette),
         .content = .{ .view = .init(&app_state, view.root) },
     });
