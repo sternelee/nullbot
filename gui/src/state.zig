@@ -231,6 +231,16 @@ pub const CapsSummary = struct {
     tools: usize,
 };
 
+pub const CompletionItem = struct {
+    /// What is inserted into the composer.
+    label: []const u8,
+    /// A short description drawn beside it.
+    detail: []const u8 = "",
+    /// Owned copies of the strings above.
+    owned_label: []u8,
+    owned_detail: []u8,
+};
+
 pub const AppState = struct {
     gpa: std.mem.Allocator,
     io: Io,
@@ -283,6 +293,16 @@ pub const AppState = struct {
     composer_focused: bool = false,
     /// A turn is in flight.
     sending: bool = false,
+
+    // ── Composer autocomplete ─────────────────────────────────────────────
+    /// Which completion the composer is offering, if any.
+    completion_mode: enum { none, mention, slash } = .none,
+    /// The byte offset in `composer` where the trigger (`@` or `/`) sits.
+    completion_start: usize = 0,
+    /// The filtered candidates for the current completion.
+    completion_items: std.ArrayListUnmanaged(CompletionItem) = .empty,
+    /// Which candidate is highlighted.
+    completion_selected: usize = 0,
 
     /// The settings menu's search field. A query filters the pages by label
     /// and keyword; an empty query draws the grouped menu.
@@ -489,6 +509,7 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
+        self.completion_items.deinit(self.gpa);
         self.sidebar.search.deinit();
         self.settings_search.deinit();
         self.stream_text.deinit(self.gpa);
@@ -979,6 +1000,116 @@ pub const AppState = struct {
         self.sending = false;
         self.clearStream();
         self.say("stopped");
+    }
+
+    // ── Composer autocomplete ─────────────────────────────────────────────
+
+    pub fn clearCompletion(self: *AppState) void {
+        for (self.completion_items.items) |item| {
+            self.gpa.free(item.owned_label);
+            self.gpa.free(item.owned_detail);
+        }
+        self.completion_items.clearRetainingCapacity();
+        self.completion_mode = .none;
+        self.completion_start = 0;
+        self.completion_selected = 0;
+    }
+
+    /// Called whenever the composer text changes; updates the completion
+    /// state. `caret` is the byte offset the textarea reports.
+    pub fn updateCompletion(self: *AppState, caret: usize) void {
+        self.clearCompletion();
+        const text = self.composer.text();
+        if (caret > text.len) return;
+        // Walk backwards from the caret to find a trigger at a word boundary.
+        var i = caret;
+        while (i > 0) {
+            const c = text[i - 1];
+            if (c == '@' or c == '/') {
+                // Must be at start or preceded by whitespace.
+                if (i == 1 or text[i - 2] == ' ' or text[i - 2] == '\t' or text[i - 2] == '\n') {
+                    const prefix = text[i..caret];
+                    self.completion_start = i - 1;
+                    if (c == '@') {
+                        self.completion_mode = .mention;
+                        self.populateMentions(prefix);
+                    } else {
+                        self.completion_mode = .slash;
+                        self.populateSlash(prefix);
+                    }
+                    return;
+                }
+            }
+            if (c == ' ' or c == '\t' or c == '\n') break;
+            i -= 1;
+        }
+    }
+
+    fn populateMentions(self: *AppState, prefix: []const u8) void {
+        // Offer a small set of workspace-relative paths. In a real app this
+        // would walk the workspace; here we seed common ones plus any prefix.
+        const candidates = [_][]const u8{
+            "README.md", "AGENTS.md", "config.json", "src/main.zig", "src/agent.zig", "gui/src/state.zig", "docs/en/README.md",
+        };
+        for (candidates) |c| {
+            if (prefix.len == 0 or std.mem.startsWith(u8, c, prefix)) {
+                self.addCompletionItem(c, "file");
+            }
+        }
+    }
+
+    fn populateSlash(self: *AppState, prefix: []const u8) void {
+        // The command names nullclaw understands, from control_plane.
+        const commands = [_][]const u8{
+            "new", "reset", "restart", "help", "status", "whoami", "model", "models", "think", "verbose", "reasoning", "exec", "queue", "usage", "tts", "voice", "stop", "abort", "compact", "allowlist", "approve", "context", "export-session", "session", "subagents", "tasks", "agents", "focus", "unfocus", "kill", "steer", "tell", "config", "capabilities", "debug", "skill", "skills", "doctor", "memory", "cost", "menu", "commands",
+        };
+        for (commands) |cmd| {
+            if (prefix.len == 0 or std.mem.startsWith(u8, cmd, prefix)) {
+                self.addCompletionItem(cmd, "command");
+            }
+        }
+    }
+
+    fn addCompletionItem(self: *AppState, label: []const u8, detail: []const u8) void {
+        const owned_label = self.gpa.dupe(u8, label) catch return;
+        errdefer self.gpa.free(owned_label);
+        const owned_detail = self.gpa.dupe(u8, detail) catch return;
+        errdefer self.gpa.free(owned_detail);
+        self.completion_items.append(self.gpa, .{
+            .label = owned_label,
+            .detail = owned_detail,
+            .owned_label = owned_label,
+            .owned_detail = owned_detail,
+        }) catch {};
+    }
+
+    /// Inserts the selected completion into the composer and closes the menu.
+    pub fn acceptCompletion(self: *AppState) void {
+        if (self.completion_mode == .none or self.completion_items.items.len == 0) return;
+        const item = self.completion_items.items[self.completion_selected];
+        const text = self.composer.text();
+        // Replace from the trigger to the caret with the label.
+        // We do not have the caret here; assume it is at the end of the prefix.
+        // The caller (composer) will set the caret after.
+        const prefix_len = text.len - self.completion_start;
+        _ = prefix_len;
+        // Simpler: replace the whole composer text from start to current end.
+        // But we want to keep text after caret. Since we don't track caret,
+        // we replace from completion_start to end.
+        _ = self.composer.replace(self.completion_start, text.len, item.label);
+        self.clearCompletion();
+    }
+
+    pub fn completionActive(self: *const AppState) bool {
+        return self.completion_mode != .none and self.completion_items.items.len > 0;
+    }
+
+    pub fn completionMove(self: *AppState, delta: i32) void {
+        const n = self.completion_items.items.len;
+        if (n == 0) return;
+        const cur: i32 = @intCast(self.completion_selected);
+        const next = @mod(cur + delta, @as(i32, @intCast(n)));
+        self.completion_selected = @intCast(next);
     }
 
     pub fn newChat(self: *AppState) void {

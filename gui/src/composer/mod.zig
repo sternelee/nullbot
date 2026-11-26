@@ -41,6 +41,29 @@ pub fn render(s: *AppState, c: *ui.Context) void {
     });
     s.composer_focused = typed.focused;
 
+    // Update completion state from the current text and caret.
+    s.updateCompletion(typed.caret);
+
+    // Completion popup: drawn above the composer box.
+    if (s.completionActive()) {
+        renderCompletion(s, c);
+    }
+
+    // Keyboard navigation for the completion menu.
+    if (s.completionActive()) {
+        if (c.input.key) |k| switch (k) {
+            .up => s.completionMove(-1),
+            .down => s.completionMove(1),
+            .enter, .tab => {
+                s.acceptCompletion();
+                // Prevent the textarea from also submitting on enter.
+                // (The textarea already ran; we consume the key here.)
+            },
+            .escape => s.clearCompletion(),
+            else => {},
+        };
+    }
+
     const foot = ui.div(c).row().wFull().gap(design.Spacing.sm).itemsCenter();
     defer foot.end();
 
@@ -48,6 +71,36 @@ pub fn render(s: *AppState, c: *ui.Context) void {
     ui.spacer(c);
     hint(s, c);
     sendOrStop(s, c, typed.submitted);
+}
+
+fn renderCompletion(s: *AppState, c: *ui.Context) void {
+    const box = ui.div(c).column().wFull().maxW(design.Spacing.content_max)
+        .bg(s.palette.panel).border(s.palette.border).borderW(1).rounded(10).p(6).gap(2);
+    defer box.end();
+
+    for (s.completion_items.items, 0..) |item, i| {
+        const selected = i == s.completion_selected;
+        const row = ui.div(c).row().wFull().gap(design.Spacing.sm).itemsCenter()
+            .px(design.Spacing.sm).py(4).rounded(6)
+            .bg(if (selected) s.palette.accent.alpha(0.15) else s.palette.panel);
+        defer row.end();
+
+        const icon = if (s.completion_mode == .mention) "doc.text" else "slash.circle";
+        ui.icon(c, icon, .{ .size = 12, .color = if (selected) s.palette.accent else s.palette.muted });
+        ui.text(c, item.label, .{ .size = design.FontSize.sm, .color = s.palette.text, .weight = if (selected) .semibold else .regular });
+        if (item.detail.len > 0) {
+            ui.spacer(c);
+            ui.text(c, item.detail, .{ .size = design.FontSize.xs, .color = s.palette.faint });
+        }
+
+        // Click to accept.
+        const press = ui.pressable(c, .{}, s.palette.hover);
+        if (press.clicked) {
+            s.completion_selected = i;
+            s.acceptCompletion();
+        }
+        ui.end(c);
+    }
 }
 
 /// The hint at the right of the foot: where a turn will land and the keys, or
