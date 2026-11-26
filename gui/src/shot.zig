@@ -109,6 +109,25 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02b-chat-table");
 
+    // A table wider than the window keeps its columns and scrolls sideways,
+    // a `<br>` breaks a line where it stands, and a note carries the way back
+    // to the sentence that cited it.
+    w.app.newChat();
+    w.app.pushMessage("user", "Show the channel matrix, and the pairing rule.");
+    w.app.pushMessage("assistant",
+        \\Pairing comes first[^pairing].<br>Everything else waits on it.
+        \\
+        \\| Channel | Transport | Auth | Allowlist | Mode | Retries | Reconnect | Backoff | Pairing | Scope |
+        \\| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+        \\| telegram | long poll | bot token | required | supervised | 3 | backoff | exponential | six digits | per account |
+        \\| discord | websocket | bot token | required | supervised | 3 | backoff | exponential | six digits | per account |
+        \\| signal | dbus | linked device | required | supervised | 3 | backoff | exponential | six digits | per account |
+        \\
+        \\[^pairing]: A six-digit code, shown once at startup and exchanged for a token.
+    );
+    w.tester.settle(0.5);
+    try shoot(&w, "02c-chat-wide-table");
+
     // An answer mid-flight: the transcript, then the bubble being written,
     // with the composer offering to stop it.
     w.app.sending = true;

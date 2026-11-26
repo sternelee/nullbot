@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 133 tests, headless
+zig build test       # 136 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -69,6 +69,7 @@ the app runs:
 | `01c-theme-menu.png` | The palette menu hung off the footer's palette button |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
 | `02b-chat-table.png` | A table with per-column alignment, a nested checklist and a footnote |
+| `02c-chat-wide-table.png` | A table too wide for the column: it scrolls sideways, and a note carries the way back |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -117,8 +118,10 @@ pinned action bar with Save & restart, Apply and Reload.
 The markdown an agent writes is drawn, not echoed: headings, lists (nested,
 numbered, and `- [x]` checkboxes), quotations, rules, fenced code with its
 language, tables with their columns aligned by the separator's colons and
-sized to their content, footnotes (`[^label]`, numbered by where they are
-first cited, with a reference that scrolls to its note), strikethrough,
+sized to their content and scrolling sideways when they outgrow the column,
+`<br>` hard breaks, footnotes (`[^label]`, numbered by where they are first
+cited, with a reference that scrolls to its note and a way back to the
+sentence itself), strikethrough,
 images (as their alt text), and links — `[label](url)`, `<url>`, and the bare
 URLs, `www.` hosts and email addresses GFM links on its own. A link opens in
 the browser; a footnote reference jumps to the note under the reply.

@@ -37,11 +37,24 @@ pub fn renderTranscript(s: *AppState, c: *ui.Context) void {
     if (s.streaming()) message.renderStreaming(s, c);
 
     notes(s, c, scroller_id, c.rects.get(scroller_id));
+
+    // Coming back from a note: the message that cites it recorded where its
+    // reference landed on the screen, and this turns that into an offset.
+    if (s.reveal_reference_y) |y| if (c.rects.get(scroller_id)) |sr| {
+        const offset = c.scroll.get(scroller_id) orelse 0;
+        // A little above the reference, so the sentence it sits in is read
+        // whole rather than started under the header.
+        const want = offset + (y - sr.y) - 28;
+        c.scroll.put(c.gpa, scroller_id, @max(0, want)) catch {};
+        s.reveal_reference = null;
+        s.reveal_reference_y = null;
+    };
 }
 
 /// The answer's footnotes, one row each, under a rule: what a reference in
-/// the prose jumps to. A reference whose note was never written has nothing
-/// to reach, so only the notes a document defines are drawn.
+/// the prose jumps to, and where a click on its number comes back from.
+/// A reference whose note was never written has nothing to reach, so only
+/// the notes a document defines are drawn.
 fn notes(s: *AppState, c: *ui.Context, scroller_id: u64, scroller_rect: ?ui.Rect) void {
     const list = citedFootnotes(s);
     if (list.len == 0) return;
@@ -52,15 +65,18 @@ fn notes(s: *AppState, c: *ui.Context, scroller_id: u64, scroller_rect: ?ui.Rect
     defer block.end();
 
     for (list) |note| {
-        const hit = ui.pressable(c, .{
-            .direction = .row,
-            .width = .fill,
-            .gap = 8,
-            .padding = .xy(6, 4),
-            .radius = 6,
-            .align_items = .start,
-        }, s.palette.hover);
-        defer ui.end(c);
+        const row = ui.div(c).row().wFull().gap(8).itemsStart().rounded(6);
+        defer row.end();
+
+        // The number is the way back: it was the way here, and a reader who
+        // has read the note wants the sentence they were on, not the top.
+        const back = ui.button(c, "", .{
+            .variant = .ghost,
+            .icon = "arrow.uturn.backward",
+            .size = design.FontSize.xs,
+        });
+        if (back.clicked) s.returnToReference(note.number);
+
         ui.textf(c, .{ .size = design.FontSize.xs, .color = s.palette.accent, .tabular = true }, "{d}", .{note.number});
         ui.richText(c, if (note.text.len > 0) note.text else "(no text)", note.spans, .{
             .size = design.FontSize.xs,
@@ -68,20 +84,16 @@ fn notes(s: *AppState, c: *ui.Context, scroller_id: u64, scroller_rect: ?ui.Rect
             .wrap = true,
             .leading = 1.45,
         });
+
         // A jump asked for from a reference in the prose lands here: the
         // row knows where it is, and the scroller how far down it has come,
         // so the offset that puts this row at the top is arithmetic.
         if (s.reveal_footnote) |want| {
-            if (want == note.number and hit.rect != null and scroller_rect != null) {
-                // The row's place in the scrolled content: its position on the
-                // screen less the scroller's, plus how far the scroller is in.
-                const r = hit.rect.?;
-                const top = scroller_rect.?.y;
+            if (want == note.number) if (row.interaction().rect) |r| if (scroller_rect) |sr| {
                 const offset = c.scroll.get(scroller_id) orelse 0;
-                const y = offset + (r.y - top);
-                c.scroll.put(c.gpa, scroller_id, @max(0, y)) catch {};
+                c.scroll.put(c.gpa, scroller_id, @max(0, offset + (r.y - sr.y) - 12)) catch {};
                 s.reveal_footnote = null;
-            }
+            };
         }
     }
 }

@@ -675,6 +675,24 @@ const Builder = struct {
                 }
             }
             if (c == '<') {
+                // `<br>` and `<br/>`: a hard line break, as GFM's HTML does.
+                // The newline in the text is what the layout breaks on, so it
+                // is written into the run rather than drawn as a box.
+                if (std.ascii.startsWithIgnoreCase(src[i..], "<br>")) {
+                    try b.put("\n");
+                    i += 4;
+                    continue;
+                }
+                if (std.ascii.startsWithIgnoreCase(src[i..], "<br/>")) {
+                    try b.put("\n");
+                    i += 5;
+                    continue;
+                }
+                if (std.ascii.startsWithIgnoreCase(src[i..], "<br />")) {
+                    try b.put("\n");
+                    i += 6;
+                    continue;
+                }
                 // `<url>` and `<user@host>`: the angle brackets are syntax.
                 if (std.mem.indexOfScalarPos(u8, src, i + 1, '>')) |close| {
                     const inner = src[i + 1 .. close];

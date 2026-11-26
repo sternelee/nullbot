@@ -539,6 +539,83 @@ test "a mention only opens at a word boundary" {
     try testing.expect(!w.app.completionActive());
 }
 
+test "a <br> in a reply breaks the line" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "one line or two?");
+    w.app.pushMessage("assistant", "first<br>second<br/>third<br />fourth");
+    w.tester.settle(0.5);
+
+    // Each `<br>` leaves a newline where it stood, so the four words land on
+    // four lines rather than in one run with tags in it.
+    try testing.expect(!w.tester.containsText("<br"));
+    const first = w.tester.findText("first\nsecond\nthird\nfourth");
+    try testing.expect(first != null);
+    const lines = first.?.h;
+    const one_line = w.tester.findText("one line or two?").?.h;
+    try testing.expect(lines > one_line * 3);
+}
+
+test "a note sends the reader back to the reference that cited it" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "what is that?");
+    w.app.pushMessage("assistant",
+        \\The gateway pairs first[^pairing], then serves.
+        \\
+        \\[^pairing]: A six-digit code, exchanged once.
+    );
+    w.tester.settle(0.5);
+
+    // From the reference to the note...
+    w.app.jumpToFootnote(1);
+    w.tester.settle(0.5);
+    try testing.expect(w.app.reveal_footnote == null);
+
+    // ...and back again. The transcript resolves the return on the frame
+    // after the one that recorded where the reference was drawn.
+    w.app.returnToReference(1);
+    try testing.expect(w.app.reveal_reference == 1);
+    w.tester.settle(0.5);
+    try testing.expect(w.app.reveal_reference == null);
+    try testing.expect(w.app.reveal_reference_y == null);
+}
+
+test "a table wider than the window keeps its width and scrolls sideways" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "a wide one");
+    w.app.pushMessage("assistant",
+        \\| Column one | Column two | Column three | Column four | Column five | Column six |
+        \\| --- | --- | --- | --- | --- | --- |
+        \\| alpha | beta | gamma | delta | epsilon | zeta |
+    );
+    w.tester.settle(0.5);
+
+    // Every column is drawn at the width its cells ask for, so the last one
+    // sits past the right edge of the transcript rather than being squeezed
+    // into it — and it is still laid out, not clipped away.
+    const first = w.tester.findText("Column one").?;
+    const last = w.tester.findText("Column six").?;
+    try testing.expect(last.x > first.x);
+    try testing.expect(w.tester.hasText("zeta"));
+
+    // The table fits when the window is wide enough for it: no wider than
+    // the column it sits in.
+    w.tester.resize(2400, 800);
+    w.tester.settle(0.5);
+    const wide_first = w.tester.findText("Column one").?;
+    const wide_last = w.tester.findText("Column six").?;
+    try testing.expect(wide_last.x + wide_last.w < 2400);
+    try testing.expect(wide_last.x > wide_first.x);
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();

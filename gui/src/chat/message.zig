@@ -214,31 +214,70 @@ fn anchoredText(s: *AppState, c: *ui.Context, block: md.Block, style: ui.TextSty
                 .link => s.openLink(a.target),
             };
             if (target.hovered) c.cursor_hand = true;
+            // A reader coming back from a note: its reference's place on the
+            // screen is what the transcript needs to scroll to. Only the
+            // first line of it, which is where the eye should land.
+            if (a.mark == .footnote and s.reveal_reference != null and
+                s.reveal_reference.? == a.number and s.reveal_reference_y == null)
+            {
+                s.reveal_reference_y = r.y + y;
+            }
             hit.end();
         }
     }
 }
 
+/// A table, sized to what it holds. Its columns take the room their widest
+/// cell asks for; when the whole would run past the window, the table keeps
+/// that width and scrolls sideways instead of squeezing every cell until the
+/// words break. A table that fits scrolls nothing.
 fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
     _ = s;
     if (block.table_header.len == 0) return;
     const n = block.table_header.len;
 
-    const box = ui.div(c).column().wFull().rounded(design.Radius.md)
-        .bg(pal.code_bg).borderW(1).border(pal.code_border).clip();
-    defer box.end();
+    const layout = measureColumns(c, block, n);
+    if (layout.width <= 0) return;
+    // The room the table has is its column's, not the window's: the
+    // transcript caps its measure, so a table measured against the window
+    // would think it fits and then paint over the margin.
+    const avail = @max(160, @min(design.Spacing.content_max, c.size.w - 88));
+    const scrolls = layout.width > avail;
 
-    // A column takes the room its widest cell asks for, and the whole is
-    // scaled into the table's own width when the cells would overflow it:
-    // two short cells stay compact, a long sentence gets the width it needs.
-    const widths = columnWidths(c, block, n);
+    // The frame around the table, and the viewport that scrolls it: the
+    // scroller is as wide as the room there is, and the table inside keeps
+    // its own width whatever that room turns out to be.
+    const frame = ui.div(c).column().wFull().rounded(design.Radius.md)
+        .bg(pal.code_bg).borderW(1).border(pal.code_border).clip();
+    defer frame.end();
+
+    // The viewport that scrolls the table: as wide as the room there is when
+    // the table is wider than it, and full width otherwise. Chosen before the
+    // box opens — a box opened and then replaced is a box left open.
+    const viewport = if (scrolls) blk: {
+        const v = ui.div(c).column().w(avail).minW(avail).maxW(avail);
+        v.c.node(v.index).style.scroll_x = true;
+        v.c.node(v.index).style.clip = true;
+        // The bar at the foot says there is more to the right without a
+        // pointer over the table to find out.
+        v.c.node(v.index).style.scroll_bar = true;
+        v.c.node(v.index).style.scroll_bar_fades = false;
+        break :blk v;
+    } else ui.div(c).column().wFull();
+    defer viewport.end();
+
+    const table = if (scrolls)
+        ui.div(c).column().w(layout.width).minW(layout.width).maxW(layout.width)
+    else
+        ui.div(c).column().wFull();
+    defer table.end();
 
     {
         const head = ui.div(c).row().wFull().px(design.Spacing.md).py(design.Spacing.sm).gap(design.Spacing.md);
         head.c.node(head.index).style.background = pal.bg_tertiary;
         defer head.end();
         for (block.table_header, 0..) |cell, i| {
-            tableCell(c, cell, widths[i], .{
+            tableCell(c, cell, layout.widths[i], .{
                 .size = design.FontSize.sm,
                 .weight = .semibold,
                 .color = pal.text_primary,
@@ -252,7 +291,7 @@ fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         defer body.end();
         for (0..n) |i| {
             const cell = if (i < row.len) row[i] else "";
-            tableCell(c, cell, widths[i], .{
+            tableCell(c, cell, layout.widths[i], .{
                 .size = design.FontSize.sm,
                 .color = pal.text_primary,
                 .wrap = true,
@@ -261,34 +300,43 @@ fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
     }
 }
 
-/// One column's width: what its widest cell asks for, scaled down with the
-/// rest when the row would overflow the window.
-fn columnWidths(c: *ui.Context, block: md.Block, n: usize) []f32 {
+const ColumnLayout = struct {
+    /// Each column's width in points, padding included.
+    widths: []f32,
+    /// The table's own width: every column, the gaps between them and the
+    /// padding at its edges.
+    width: f32,
+};
+
+/// What each column asks for: its widest cell, capped so one long paragraph
+/// in a cell does not make a column a page wide on its own.
+fn measureColumns(c: *ui.Context, block: md.Block, n: usize) ColumnLayout {
     const a = c.alloc();
     // The frame's own arena: both arrays go away with the frame.
-    const want = a.alloc(f32, n) catch return &.{};
-    @memset(want, 0);
+    const widths = a.alloc(f32, n) catch return .{ .widths = &.{}, .width = 0 };
+    @memset(widths, 0);
     const header_style: ui.TextStyle = .{ .size = design.FontSize.sm, .weight = .semibold };
     const body_style: ui.TextStyle = .{ .size = design.FontSize.sm };
     for (block.table_header, 0..) |cell, i| {
-        if (i < n) want[i] = c.text.layout(cell, header_style).width;
+        if (i < n) widths[i] = c.text.layout(cell, header_style).width;
     }
     for (block.table_rows) |row| {
         for (row, 0..) |cell, i| {
             if (i >= n) break;
-            want[i] = @max(want[i], c.text.layout(cell, body_style).width);
+            widths[i] = @max(widths[i], c.text.layout(cell, body_style).width);
         }
     }
-    // Every cell has the same padding and the row its own gaps.
-    const gaps: f32 = design.Spacing.md * @as(f32, @floatFromInt(n + 1));
-    var total: f32 = gaps;
-    for (want) |w| total += w;
-    const avail = @max(160, c.size.w - 88);
-    if (total > avail and total > 0) {
-        const scale = avail / total;
-        for (want) |*w| w.* *= scale;
+    // A cell wraps rather than pushing its column past this, which keeps a
+    // table of prose readable when it has to scroll.
+    const widest: f32 = 360;
+    const edges: f32 = design.Spacing.md * 2;
+    var total: f32 = edges;
+    for (widths, 0..) |w, i| {
+        widths[i] = @min(w, widest) + edges;
+        total += widths[i];
     }
-    return want;
+    total += design.Spacing.md * @as(f32, @floatFromInt(n -| 1));
+    return .{ .widths = widths, .width = total };
 }
 
 /// A column's alignment: the `Align` of the style it is drawn with.

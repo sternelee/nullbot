@@ -311,9 +311,14 @@ pub const AppState = struct {
     /// A footnote the reader asked to jump to, from a reference in the
     /// answer: the transcript scrolls to its definition on the next frame.
     reveal_footnote: ?u32 = null,
-    /// The transcript scroller's rect and offset when a jump was asked for,
-    /// so the jump can be resolved once that footnote has been laid out.
-    reveal_from: ?struct { y: f32, offset: f32 } = null,
+    /// A reference the reader asked to come back to, from the note they
+    /// jumped to: the transcript scrolls to where it is cited.
+    reveal_reference: ?u32 = null,
+    /// Where the reference being returned to was drawn, in window points. The
+    /// message that holds it records this as it draws; the transcript turns
+    /// it into a scroll offset, because only the transcript knows its own
+    /// box and how far down it already is.
+    reveal_reference_y: ?f32 = null,
 
     /// The settings menu's search field. A query filters the pages by label
     /// and keyword; an empty query draws the grouped menu.
@@ -750,7 +755,17 @@ pub const AppState = struct {
     /// which one to reach.
     pub fn jumpToFootnote(self: *AppState, number: u32) void {
         self.reveal_footnote = number;
-        self.reveal_from = null;
+        self.reveal_reference = null;
+        self.reveal_reference_y = null;
+    }
+
+    /// Comes back to where a note was cited: the message that holds the
+    /// reference records its place as it draws, and the transcript scrolls
+    /// there. The note the reader was on stays where it is.
+    pub fn returnToReference(self: *AppState, number: u32) void {
+        self.reveal_reference = number;
+        self.reveal_reference_y = null;
+        self.reveal_footnote = null;
     }
 
     /// Opens a link from the answer in the system's browser.
