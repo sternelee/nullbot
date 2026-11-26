@@ -616,6 +616,65 @@ test "a table wider than the window keeps its width and scrolls sideways" {
     try testing.expect(wide_last.x > wide_first.x);
 }
 
+test "a code block is highlighted by the language its fence names" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "show the code");
+    w.app.pushMessage("assistant",
+        \\```zig
+        \\const x = 42; // a note
+        \\pub fn main() void {}
+        \\```
+    );
+    w.tester.settle(0.5);
+
+    // The block is drawn whole; the highlighting is in the spans, so what a
+    // test can see is that the code is there and the fence is not.
+    try testing.expect(w.tester.containsText("const x = 42; // a note"));
+    try testing.expect(!w.tester.containsText("```"));
+    try testing.expect(w.tester.hasText("zig"));
+}
+
+test "a quote inside a quote draws one edge per level, and a rule has room" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "quote me");
+    w.app.pushMessage("assistant",
+        \\> once
+        \\> > twice
+        \\> > > three deep
+        \\
+        \\- - -
+        \\
+        \\after the break
+    );
+    w.tester.settle(0.5);
+
+    const once = w.tester.findText("once").?;
+    const twice = w.tester.findText("twice").?;
+    const deep = w.tester.findText("three deep").?;
+    // Each level steps in from the one outside it.
+    try testing.expect(once.x < twice.x);
+    try testing.expect(twice.x < deep.x);
+
+    // The rule sits between the quote and the paragraph, with air around it
+    // rather than flush against either.
+    const after = w.tester.findText("after the break").?;
+    try testing.expect(after.y > deep.y);
+    try testing.expect(after.y - (deep.y + deep.h) > 12);
+}
+
+test "a rule written with spaces between its marks is still a rule" {
+    var doc = try @import("md.zig").parse(testing.allocator, "a\n\n- - -\n\nb");
+    defer doc.deinit();
+    try testing.expectEqual(@as(usize, 3), doc.blocks.len);
+    try testing.expectEqual(@import("md.zig").Kind.rule, doc.blocks[1].kind);
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();

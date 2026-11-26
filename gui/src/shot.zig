@@ -69,6 +69,7 @@ test "screenshots" {
         \\Run `nullclaw models list`, or read `~/.nullclaw/config.json`:
         \\
         \\```sh
+        \\# the provider this config names
         \\nullclaw config get default_provider
         \\```
         \\
@@ -78,6 +79,16 @@ test "screenshots" {
         \\- `anthropic` — Claude
         \\
         \\> Keys live in the secrets store, not the config file.
+        \\> > A config may name a key, but it should not hold one.
+        \\
+        \\- - -
+        \\
+        \\The runtime reads it once, at startup:
+        \\
+        \\```zig
+        \\const key = config.providers.items[0].api_key orelse "missing";
+        \\if (key.len == 0) return error.NoKey; // fail loudly
+        \\```
     );
     w.tester.settle(0.5);
     try shoot(&w, "02-chat-markdown");

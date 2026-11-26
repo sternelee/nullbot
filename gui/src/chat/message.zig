@@ -126,6 +126,11 @@ pub fn renderStreaming(s: *AppState, c: *ui.Context) void {
 fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
     switch (block.kind) {
         .rule => {
+            // A break reads as one only with room on both sides of it; drawn
+            // flush against the text above and below it looks like a stray
+            // underline.
+            const pad = ui.div(c).column().wFull().py(design.Spacing.md);
+            defer pad.end();
             _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = s.palette.border }, .none, null);
         },
         .code => code_block.render(s, c, block, pal),
@@ -159,12 +164,23 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
     }
 }
 
-/// A quotation: a rule down its left edge that deepens with its nesting,
-/// then the text, indented by how far in it was written.
+/// A quotation: a rule down its left edge for every level it is nested, so a
+/// quote inside a quote reads as two, then the text.
 fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
-    const row = ui.div(c).row().wFull().gap(design.Spacing.sm).pl(@as(f32, @floatFromInt(block.indent)) * 14);
+    const depth: usize = @as(usize, block.indent) + 1;
+    const row = ui.div(c).row().wFull().gap(design.Spacing.sm);
     defer row.end();
-    _ = c.leaf(.{ .width = .{ .px = 2 }, .height = .fill, .background = s.palette.accent.alpha(0.6) }, .none, null);
+    // The deeper a quote is, the quieter its outermost rule: the innermost is
+    // the one the eye follows.
+    for (0..depth) |i| {
+        const level: f32 = @floatFromInt(i);
+        const alpha = 0.6 - level * 0.15;
+        _ = c.leaf(.{
+            .width = .{ .px = 2 },
+            .height = .fill,
+            .background = s.palette.accent.alpha(if (alpha > 0.2) alpha else 0.2),
+        }, .none, null);
+    }
     anchoredText(s, c, block, blockStyle(s, block));
 }
 

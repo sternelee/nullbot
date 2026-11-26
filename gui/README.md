@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 136 tests, headless
+zig build test       # 142 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -116,15 +116,18 @@ key, gateway, workspace, MCP servers, cron, skills and capabilities — and has 
 pinned action bar with Save & restart, Apply and Reload.
 
 The markdown an agent writes is drawn, not echoed: headings, lists (nested,
-numbered, and `- [x]` checkboxes), quotations, rules, fenced code with its
-language, tables with their columns aligned by the separator's colons and
-sized to their content and scrolling sideways when they outgrow the column,
-`<br>` hard breaks, footnotes (`[^label]`, numbered by where they are first
-cited, with a reference that scrolls to its note and a way back to the
-sentence itself), strikethrough,
-images (as their alt text), and links — `[label](url)`, `<url>`, and the bare
-URLs, `www.` hosts and email addresses GFM links on its own. A link opens in
-the browser; a footnote reference jumps to the note under the reply.
+numbered, and `- [x]` checkboxes), tables with their columns aligned by the
+separator's colons, sized to their content and scrolling sideways when they
+outgrow the column, `<br>` hard breaks, quotations that nest one edge deeper
+per level, thematic breaks with room around them, code highlighted by the
+language its fence names (comments, strings, numbers, keywords, types,
+constants and calls, in colours mixed from the palette so every theme
+highlights in its own terms), footnotes (`[^label]`, numbered by where they
+are first cited, with a reference that scrolls to its note and a way back to
+the sentence itself), strikethrough, images (as their alt text), and links —
+`[label](url)`, `<url>`, and the bare URLs, `www.` hosts and email addresses
+GFM links on its own. A link opens in the browser; a footnote reference jumps
+to the note under the reply.
 
 ## The pages, and what they run
 

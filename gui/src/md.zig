@@ -295,14 +295,22 @@ fn nestingDepth(line: []const u8) u8 {
     return depth;
 }
 
+/// A thematic break: three or more `-`, `*`, `_` (or a line of `=`), with
+/// spaces between them as GFM allows (`- - -`, `* * *`).
 fn isRule(line: []const u8) bool {
-    if (line.len < 3) return false;
     const ch = line[0];
     if (ch != '-' and ch != '*' and ch != '_' and ch != '=') return false;
+    var marks: usize = 0;
     for (line) |c| {
-        if (c != ch) return false;
+        if (c == ch) {
+            marks += 1;
+            continue;
+        }
+        // Spaces and tabs between the marks are allowed; anything else means
+        // the line is something else (`--flag`, `**bold**`).
+        if (c != ' ' and c != '\t') return false;
     }
-    return true;
+    return marks >= 3;
 }
 
 fn isTableSeparator(line: []const u8) bool {

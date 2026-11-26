@@ -6,6 +6,7 @@ const ui = @import("nanoui").ui;
 const design = @import("../design.zig");
 const state = @import("../state.zig");
 const md = @import("../md.zig");
+const highlight = @import("../highlight.zig");
 
 const AppState = state.AppState;
 
@@ -48,7 +49,11 @@ pub fn render(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.
         const body = ui.div(c).column().wFull().px(design.Spacing.md).py(design.Spacing.sm);
         body.c.node(body.index).style.selectable = true;
         defer body.end();
-        ui.text(c, block.text, .{
+        // Coloured by the language the fence named. The spans are the frame's
+        // to free: the whole block is tokenized again on every frame, which
+        // is cheap at a code block's size and keeps nothing to invalidate.
+        const spans = highlight.spans(c.alloc(), block.lang, block.text, s.palette) catch &.{};
+        ui.richText(c, block.text, spans, .{
             .size = design.FontSize.sm,
             .mono = true,
             .color = pal.text_primary,
