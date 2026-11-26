@@ -223,21 +223,25 @@ fn isOrderedMarker(marker: []const u8) bool {
     return std.mem.endsWith(u8, marker, ".") or std.mem.endsWith(u8, marker, ")");
 }
 
-/// `spans` with a background behind every inline code run. The reader marks a
-/// code span with `mono`; the surface it sits on is the view's business, so
-/// this is where the tint is added — and it is added only where there is none,
-/// so a span that already named a colour of its own keeps it.
-pub fn deckInline(c: *ui.Context, spans: []const ui.Span, code_bg: ui.Color) []const ui.Span {
+/// `spans` dressed for the surface they are drawn on: a background behind every
+/// inline code run, and the link colour over every link.
+///
+/// The reader marks what a run *is* — `mono` for code, `underline` for a link —
+/// and the colours are the view's business, because only the view knows the
+/// theme. A span that already named a colour of its own keeps it.
+pub fn deckInline(c: *ui.Context, spans: []const ui.Span, code_bg: ui.Color, link: ui.Color) []const ui.Span {
     if (spans.len == 0) return &.{};
     var any = false;
     for (spans) |sp| {
         if (sp.mono and sp.background == null) any = true;
+        if (sp.underline and sp.color == null) any = true;
     }
     if (!any) return spans;
     const out = c.alloc().alloc(ui.Span, spans.len) catch return spans;
     for (spans, 0..) |sp, i| {
         out[i] = sp;
         if (sp.mono and sp.background == null) out[i].background = code_bg;
+        if (sp.underline and sp.color == null) out[i].color = link;
     }
     return out;
 }
@@ -337,7 +341,7 @@ fn anchoredRun(
             // `panel` rather than `raised`: a pill has to be readable as a chip
             // on the page, and `raised` sits too close to the page colour to tell
             // it from a compression artifact.
-            .spans = deckInline(c, spans, s.palette.panel),
+            .spans = deckInline(c, spans, s.palette.panel, s.palette.accent),
         },
     }, null);
     if (anchors.len == 0) return;
@@ -408,29 +412,46 @@ fn renderImage(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         });
     }
 
-    // The caption: its alt text, and the path under it. For a picture that
-    // was drawn that is the whole of it; for one that was not, it is the
-    // explanation.
-    {
+    // A picture that cannot be drawn still gets its place: a dashed frame of
+    // the height a picture would take, with what it was and why it is not
+    // there inside it. Leaving only a line of text would let a reply's
+    // layout close up around the hole, and the reader would not see that
+    // anything was meant to be there at all.
+    if (!drawn) {
+        // A URL is not a failure of the file: it was never asked for, so it
+        // is named as what it is rather than by the error that stopped us.
+        const remote = std.mem.indexOf(u8, block.image_url, "://") != null;
+        const why = if (remote) "not fetched" else (entry.failure orelse "unsupported format");
+        const frame = ui.div(c).column().wFull().h(120).center().gap(6).rounded(design.Radius.sm)
+            .bg(s.palette.raised.alpha(0.5));
+        frame.c.node(frame.index).style.border = s.palette.border;
+        frame.c.node(frame.index).style.border_width = 1;
+        frame.c.node(frame.index).style.border_dashed = true;
+        defer frame.end();
+        ui.icon(c, "photo.badge.exclamationmark", .{ .size = 20, .color = s.palette.faint });
+        ui.text(c, if (block.image_alt.len > 0) block.image_alt else "image", .{
+            .size = design.FontSize.sm,
+            .color = s.palette.muted,
+        });
+        ui.text(c, why, .{
+            .size = design.FontSize.xs,
+            .color = s.palette.faint,
+            .mono = true,
+        });
+    }
+
+    // The caption under a picture that was drawn: what it shows. A picture
+    // that was not says everything inside its placeholder instead, so a
+    // second line here would repeat it.
+    if (drawn) {
         const row = ui.div(c).row().wFull().gap(6).itemsCenter();
         defer row.end();
-        ui.icon(c, if (drawn) "photo" else "photo.badge.exclamationmark", .{
-            .size = 11,
-            .color = if (drawn) pal.text_muted else s.palette.warning,
-        });
+        ui.icon(c, "photo", .{ .size = 11, .color = pal.text_muted });
         ui.text(c, if (block.image_alt.len > 0) block.image_alt else "image", .{
             .size = design.FontSize.xs,
-            .color = if (drawn) pal.text_secondary else s.palette.warning,
+            .color = pal.text_secondary,
             .wrap = true,
         });
-        ui.spacer(c);
-        if (!drawn) {
-            ui.text(c, entry.failure orelse "unsupported format", .{
-                .size = design.FontSize.xs,
-                .color = s.palette.faint,
-                .mono = true,
-            });
-        }
     }
 
     // The reference itself, so a path or a URL in a reply can be used.

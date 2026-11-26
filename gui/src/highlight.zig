@@ -82,6 +82,10 @@ const Dialect = struct {
     hash_directive: bool = false,
     /// `@` starts one (Python's, Java's decorators).
     at_directive: bool = false,
+    /// `\\` at the start of a line opens a string that runs to the end of it:
+    /// Zig's multiline string literal. It is the language's most common way to
+    /// write a block of text, and without it those lines read as code.
+    backslash_string: bool = false,
     keywords: []const []const u8 = &.{},
 
     fn of(lang_in: []const u8) Dialect {
@@ -120,6 +124,7 @@ const Dialect = struct {
     const zig = Dialect{
         .line_comment = "//",
         .quotes = "\"'",
+        .backslash_string = true,
         .keywords = &.{
             "const",    "var",      "fn",             "pub",       "return",      "if",          "else",
             "for",      "while",    "switch",         "struct",    "enum",        "union",       "error",
@@ -406,6 +411,15 @@ fn scan(a: std.mem.Allocator, d: Dialect, src: []const u8, tokens: *Tokens) !voi
             continue;
         }
 
+        // Zig's multiline string: `\\text`, to the end of the line.
+        if (d.backslash_string and c == '\\' and i + 1 < src.len and src[i + 1] == '\\' and
+            (i == 0 or src[i - 1] == '\n' or src[i - 1] == ' ' or src[i - 1] == '\t'))
+        {
+            try push(tokens, a, i, line_end, .string);
+            i = line_end;
+            continue;
+        }
+
         // Strings.
         if (std.mem.indexOfScalar(u8, d.quotes, c) != null) {
             var j = i + 1;
@@ -479,10 +493,18 @@ fn scan(a: std.mem.Allocator, d: Dialect, src: []const u8, tokens: *Tokens) !voi
         // painted the rest of the line as one.
         if (isPunct(c) or c == ' ' or c == '\t') {
             var j = i;
-            while (j < src.len and (isPunct(src[j]) or src[j] == ' ' or src[j] == '\t')) j += 1;
-            try push(tokens, a, i, j, .punctuation);
-            i = j;
-            continue;
+            while (j < src.len and (isPunct(src[j]) or src[j] == ' ' or src[j] == '\t')) {
+                // A `\\` that opens a Zig string belongs to the string, not to
+                // the run of indentation and operators in front of it. Stop
+                // here so the next pass sees it.
+                if (d.backslash_string and src[j] == '\\' and j + 1 < src.len and src[j + 1] == '\\') break;
+                j += 1;
+            }
+            if (j > i) {
+                try push(tokens, a, i, j, .punctuation);
+                i = j;
+                continue;
+            }
         }
         i += 1;
     }
@@ -580,6 +602,32 @@ test "zig keywords, strings, numbers and comments are told apart" {
     try testing.expect(saw_string);
     try testing.expect(saw_comment);
     try testing.expect(saw_function);
+}
+
+test "zig's multiline string is a string, not code" {
+    // `\\const x = 1;` is text, not a declaration: without this the words
+    // inside it would be coloured as keywords and the reader would be lied to.
+    const src = "const doc =\n    \\\\const x = 1;\n    \\\\return x;\n;";
+    const toks = try kinds(testing.allocator, "zig", src);
+    defer testing.allocator.free(toks);
+
+    var saw_keyword_string = false;
+    var saw_real_keyword = false;
+    for (toks) |t| {
+        if (t.kind == .keyword and std.mem.eql(u8, t.text, "const") and std.mem.indexOf(u8, t.text, "\\") != null) saw_keyword_string = true;
+        if (t.kind == .keyword and std.mem.eql(u8, t.text, "const")) saw_real_keyword = true;
+    }
+    // The `const` inside the string is part of a string span, not a keyword.
+    try testing.expect(saw_real_keyword);
+    try testing.expect(!saw_keyword_string);
+    var saw_string = false;
+    var saw_wrong_keyword = false;
+    for (toks) |t| {
+        if (t.kind == .string and std.mem.indexOf(u8, t.text, "return x;") != null) saw_string = true;
+        if (t.kind == .keyword and std.mem.eql(u8, t.text, "return")) saw_wrong_keyword = true;
+    }
+    try testing.expect(saw_string);
+    try testing.expect(!saw_wrong_keyword);
 }
 
 test "a shell comment runs to the end of its line" {

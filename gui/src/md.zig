@@ -608,7 +608,10 @@ const Builder = struct {
         const from = label_start;
         const to: u32 = @intCast(b.out.items.len);
         if (to == from) return;
-        try b.spans.append(b.a, .{ .start = from, .end = to, .underline = true, .color = .{ .r = 0.25, .g = 0.45, .b = 0.95, .a = 1 } });
+        // Underlined, and no colour of its own: the view paints a link in the
+        // theme's link colour. A fixed blue here would stay that blue on every
+        // theme, light ones included.
+        try b.spans.append(b.a, .{ .start = from, .end = to, .underline = true });
         try b.anchors.append(b.a, .{ .mark = .link, .start = from, .end = to, .target = try b.a.dupe(u8, url) });
         b.start = to;
     }

@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 169 tests, headless
+zig build test       # 171 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -139,10 +139,12 @@ keeps its weight), strikethrough, inline mathematics (`$x^2$`, set in
 italics with the few TeX shapes a chat uses folded into Unicode: `x^2`
 becomes `x²`, `\alpha` becomes `α`), checklists that draw a real box per item
 and fill it when the item is done, pictures (`![alt](path)` on a line of its
-own, decoded from disk and drawn under its caption; a remote picture stays a
-link, because a frame may not wait on the network), and links —
-`[label](url)`, `<url>`, and the bare URLs, `www.` hosts and email addresses
-GFM links on its own. A link opens in the browser; a footnote reference jumps
+own, decoded from disk and drawn under its caption — and a picture that
+cannot be drawn keeps its place as a dashed frame naming the alt text and the
+reason, which is how a remote one reads, since a frame may not wait on the
+network), and links — `[label](url)`, `<url>`, and the bare URLs, `www.`
+hosts and email addresses GFM links on its own, drawn underlined in the
+theme's link colour. A link opens in the browser; a footnote reference jumps
 to the note under the reply.
 
 ## The pages, and what they run

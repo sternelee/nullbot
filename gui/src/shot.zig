@@ -90,6 +90,10 @@ test "screenshots" {
         \\```zig
         \\const key = config.providers.items[0].api_key orelse "missing";
         \\if (key.len == 0) return error.NoKey; // fail loudly
+        \\const help =
+        \\    \\\\Set models.providers.<name>.api_key, then restart.
+        \\    \\\\An empty value is the same as no value at all.
+        \\;
         \\```
     );
     w.tester.settle(0.5);
@@ -232,8 +236,13 @@ test "screenshots" {
         \\
         \\![the window this was taken in](/tmp/nullclaw-gui-shots/01-chat-empty.png)
         \\
-        \\The wait between attempts grows as $t_n = \\min(2^n \\times 250, 8000)$ ms,
-        \\so the tenth try waits $2^5 \\times 250 = 8000$ ms and no longer.
+        \\![a screenshot that is not there](/tmp/nullclaw-gui-shots/missing.png)
+        \\
+        \\![a diagram on the web](https://example.com/diagram.png)
+        \\
+        \\The wait between attempts grows as $t_n = \min(2^n \times 250, 8000)$ ms,
+        \\so the fifth try already waits $2^5 \times 250 = 8000$ ms, and every
+        \\later one waits the same.
     );
     w.tester.settle(0.5);
     try shoot(&w, "02d-chat-math-task-image");

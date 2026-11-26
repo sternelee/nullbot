@@ -747,11 +747,18 @@ test "a picture from a path is decoded and drawn, and a missing one says why" {
     try testing.expect(w.tester.containsText(path));
     try testing.expect(!w.tester.hasText("unsupported format"));
 
-    // A path that is not there explains itself rather than drawing nothing.
+    // A path that is not there reserves its place and explains itself: a
+    // dashed frame with the alt text inside, not a bare line where a picture
+    // should be.
     w.app.pushMessage("assistant", "![gone](" ++ harness.test_home ++ "/missing.png)");
     w.tester.settle(0.5);
     try testing.expect(w.tester.hasText("gone"));
     try testing.expect(w.tester.hasText("FileNotFound"));
+    // A remote picture is not fetched at all, and says so in the same frame.
+    w.app.pushMessage("assistant", "![remote](https://example.com/a.png)");
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("remote"));
+    try testing.expect(w.tester.hasText("not fetched"));
 }
 
 test "a code block's Copy puts the code on the clipboard" {
@@ -1871,4 +1878,37 @@ test "a data page reads the window's config, not the process's" {
     w.settle(1);
     try testing.expect(w.tester.containsText("testprovider"));
     try testing.expect(!w.tester.containsText("zhipu"));
+}
+
+test "a link is drawn in the theme's link colour, not a fixed blue" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "where?");
+    w.app.pushMessage("assistant", "See [the docs](https://example.com/docs) for it.");
+    w.tester.settle(0.5);
+
+    // The reader marks a link with `underline` and no colour; the view paints
+    // it in the accent the rest of the window uses. A fixed blue in the parser
+    // stayed blue on every theme.
+    const block = w.app.docs.items[1].blocks[0];
+    var saw_link = false;
+    for (block.spans) |sp| {
+        if (!sp.underline) continue;
+        saw_link = true;
+        try testing.expect(sp.color == null);
+    }
+    try testing.expect(saw_link);
+
+    // And the palette's accent is what the drawn run takes.
+    const decked = @import("chat/message.zig").deckInline(&w.tester.ctx, block.spans, w.app.palette.panel, w.app.palette.accent);
+    var coloured = false;
+    for (decked) |sp| {
+        if (sp.underline and sp.color != null) {
+            coloured = true;
+            try testing.expect(std.meta.eql(sp.color.?, w.app.palette.accent));
+        }
+    }
+    try testing.expect(coloured);
 }
