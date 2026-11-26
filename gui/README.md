@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 165 tests, headless
+zig build test       # 169 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -126,14 +126,16 @@ outgrow the column, `<br>` hard breaks, quotations that are one tinted block
 with an edge down their left side — one edge per level of nesting, the
 outermost faintest — thematic breaks that keep air only where there is
 something to separate, ordered lists whose numbers are right-aligned in a
-gutter so `9.` and `10.` do not step the text out of line, code highlighted by the
-language its fence names (comments, strings, numbers, keywords, types,
+gutter so `9.` and `10.` do not step the text out of line, code highlighted
+by the language its fence names (comments, strings, numbers, keywords, types,
 constants and calls, in colours mixed from the palette so every theme
 highlights in its own terms) and folded after fourteen lines behind a
 control that counts what is hidden, so one file's worth of code does not
 bury the message under it, footnotes (`[^label]`, numbered by where they
 are first cited, with a reference that scrolls to its note and a way back to
-the sentence itself), strikethrough, inline mathematics (`$x^2$`, set in
+the sentence itself), inline code on a tinted pill, emphasis that nests
+(`***both***` is bold and italic at once, `**bold with *italic* inside**`
+keeps its weight), strikethrough, inline mathematics (`$x^2$`, set in
 italics with the few TeX shapes a chat uses folded into Unicode: `x^2`
 becomes `x²`, `\alpha` becomes `α`), checklists that draw a real box per item
 and fill it when the item is done, pictures (`![alt](path)` on a line of its

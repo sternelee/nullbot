@@ -828,6 +828,22 @@ const Builder = struct {
                     }
                 }
             }
+            if (c == '*' and i + 2 < src.len and src[i + 1] == '*' and src[i + 2] == '*') {
+                // `***both***`: the form that means bold and italic at once.
+                // Read as a `**` first it closed on the second asterisk and
+                // left a literal `*` around the text, so the italic was lost.
+                if (findClose(src, i + 3, "***")) |close| {
+                    try b.flush();
+                    b.bold = true;
+                    b.italic = true;
+                    try b.run(src[i + 3 .. close]);
+                    try b.flush();
+                    b.bold = false;
+                    b.italic = false;
+                    i = close + 3;
+                    continue;
+                }
+            }
             if (c == '*' and i + 1 < src.len and src[i + 1] == '*') {
                 // Bold closes at a `**` that has a word before it.
                 if (findClose(src, i + 2, "**")) |close| {

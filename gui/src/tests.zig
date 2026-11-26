@@ -1032,6 +1032,80 @@ test "a break leaves no air against the message's own edges" {
     try testing.expect(above.y > alone.y);
 }
 
+test "inline code is drawn on a tinted pill" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "how do I read it?");
+    w.app.pushMessage("assistant", "Run `nullclaw status`, then read the log.");
+    w.tester.settle(0.5);
+
+    // The span carries a background: the reader marks a code run with `mono`
+    // and the view gives it the surface it sits on.
+    const spans = w.app.docs.items[1].blocks[0].spans;
+    var code_spans: usize = 0;
+    for (spans) |sp| {
+        if (sp.mono) code_spans += 1;
+    }
+    try testing.expectEqual(@as(usize, 1), code_spans);
+    // And the drawn run is the code without its backticks.
+    try testing.expect(w.tester.containsText("nullclaw status"));
+    try testing.expect(!w.tester.containsText("`"));
+}
+
+test "triple asterisks mean bold and italic at once" {
+    var doc = try md.parse(testing.allocator, "a ***both*** b");
+    defer doc.deinit();
+    const block = doc.blocks[0];
+    // Read as a `**` first this left literal asterisks and lost the italic.
+    try testing.expectEqualStrings("a both b", block.text);
+    try testing.expectEqual(@as(usize, 1), block.spans.len);
+    const span = block.spans[0];
+    try testing.expectEqualStrings("both", block.text[span.start..span.end]);
+    try testing.expect(span.weight != null);
+    try testing.expect(span.italic);
+}
+
+test "emphasis nests: a bold run keeps its weight around an italic one" {
+    var doc = try md.parse(testing.allocator, "**bold with *italic* inside** and ~~gone~~");
+    defer doc.deinit();
+    const block = doc.blocks[0];
+    try testing.expectEqualStrings("bold with italic inside and gone", block.text);
+
+    var saw_bold = false;
+    var saw_bold_italic = false;
+    for (block.spans) |sp| {
+        const run = block.text[sp.start..sp.end];
+        if (std.mem.eql(u8, run, "bold with ") and sp.weight != null and !sp.italic) saw_bold = true;
+        if (std.mem.eql(u8, run, "italic") and sp.weight != null and sp.italic) saw_bold_italic = true;
+    }
+    try testing.expect(saw_bold);
+    try testing.expect(saw_bold_italic);
+}
+
+test "a strikethrough span is struck, and only over its own text" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "was it?");
+    w.app.pushMessage("assistant", "the flag was ~~enabled~~ disabled");
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.containsText("the flag was enabled disabled"));
+    try testing.expect(!w.tester.containsText("~~"));
+    const spans = w.app.docs.items[1].blocks[0].spans;
+    var struck: usize = 0;
+    for (spans) |sp| {
+        if (sp.strike) {
+            struck += 1;
+            try testing.expectEqualStrings("enabled", w.app.docs.items[1].blocks[0].text[sp.start..sp.end]);
+        }
+    }
+    try testing.expectEqual(@as(usize, 1), struck);
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();

@@ -73,7 +73,9 @@ test "screenshots" {
         \\nullclaw config get default_provider
         \\```
         \\
-        \\**Note:** the provider needs an API key before it can be used.
+        \\**Note:** the provider needs an API key before it can be used, and
+        \\***every*** channel inherits it — a channel marked ~~enabled~~ in the
+        \\config is not a channel that has a key.
         \\
         \\- `openrouter` — the default
         \\- `anthropic` — Claude

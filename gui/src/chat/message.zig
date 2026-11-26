@@ -223,6 +223,25 @@ fn isOrderedMarker(marker: []const u8) bool {
     return std.mem.endsWith(u8, marker, ".") or std.mem.endsWith(u8, marker, ")");
 }
 
+/// `spans` with a background behind every inline code run. The reader marks a
+/// code span with `mono`; the surface it sits on is the view's business, so
+/// this is where the tint is added — and it is added only where there is none,
+/// so a span that already named a colour of its own keeps it.
+pub fn deckInline(c: *ui.Context, spans: []const ui.Span, code_bg: ui.Color) []const ui.Span {
+    if (spans.len == 0) return &.{};
+    var any = false;
+    for (spans) |sp| {
+        if (sp.mono and sp.background == null) any = true;
+    }
+    if (!any) return spans;
+    const out = c.alloc().alloc(ui.Span, spans.len) catch return spans;
+    for (spans, 0..) |sp, i| {
+        out[i] = sp;
+        if (sp.mono and sp.background == null) out[i].background = code_bg;
+    }
+    return out;
+}
+
 /// A task item's box: a rounded square, filled and ticked when done, an
 /// outline when not. Drawn rather than written as a character, because the
 /// bundled font has no box glyph and a checkbox carries its state in shape as
@@ -306,12 +325,21 @@ fn anchoredRun(
 
     // Its own leaf rather than `ui.richText`, which discards the index the
     // anchors are measured from.
-    const idx = c.leaf(.{ .width = .fill }, .{ .text = .{
-        .str = text,
-        .style = style,
-        .color = style.color orelse s.palette.text,
-        .spans = spans,
-    } }, null);
+    var styled = style;
+    // A pill around every code span needs room of its own, or the tint sits on
+    // the glyphs and reads as a highlighter rather than as a chip.
+    if (styled.span_box == null) styled.span_box = .{ .pad_x = 3, .inset_y = 1.5, .radius = 4 };
+    const idx = c.leaf(.{ .width = .fill }, .{
+        .text = .{
+            .str = text,
+            .style = styled,
+            .color = style.color orelse s.palette.text,
+            // `panel` rather than `raised`: a pill has to be readable as a chip
+            // on the page, and `raised` sits too close to the page colour to tell
+            // it from a compression artifact.
+            .spans = deckInline(c, spans, s.palette.panel),
+        },
+    }, null);
     if (anchors.len == 0) return;
 
     const it = c.interact(idx, .{});
