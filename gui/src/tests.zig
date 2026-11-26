@@ -438,8 +438,9 @@ test "a bare url in an answer is drawn as a link, and opens on a click" {
     try testing.expect(w.tester.containsText("https://example.com/docs"));
     try w.tester.clickText("See https://example.com/docs for them.");
     w.tester.settle(0.5);
-    // A test must not open a browser; the click reached the view, which asked.
-    try testing.expect(w.app.toast.len > 0);
+    // A test must not open a browser; the click reached the view, which
+    // reports the exact target instead of handing it to the desktop.
+    try testing.expectEqualStrings("opened https://example.com/docs", w.app.toast);
 }
 
 test "nested bullets step in, and a task list shows its boxes" {
