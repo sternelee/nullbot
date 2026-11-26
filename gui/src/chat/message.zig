@@ -169,18 +169,21 @@ fn renderBlock(
                     .color = s.palette.muted,
                     .tabular = true,
                 });
+            } else if (block.marker.len > 0 and !isOrderedMarker(block.marker)) {
+                // A marker the text itself carries (`·` written by hand).
+                ui.text(c, block.marker, .{ .size = design.FontSize.md, .color = s.palette.muted });
             } else {
-                // A middle dot rather than "•": the bundled font has no glyph
-                // for the bullet and fell back to a degree sign.
-                ui.text(c, if (block.marker.len > 0) block.marker else "·", .{
-                    .size = design.FontSize.md,
-                    .color = s.palette.muted,
-                });
+                // Drawn, not written: the bundled font's `·` sits near the
+                // ascender, so a bullet typed as a character rode high above
+                // its own line. A dot of two points, centred on the first
+                // line, is where a reader expects it.
+                bulletDot(s, c);
             }
-            anchoredText(s, c, block, if (block.task != null and block.task.?)
-                taskDoneStyle(s, block)
-            else
-                blockStyle(s, block));
+            if (block.task != null and block.task.?) {
+                struckText(s, c, block);
+            } else {
+                anchoredText(s, c, block, blockStyle(s, block));
+            }
         },
         .table => renderTable(s, c, block, pal),
         .image => renderImage(s, c, block, pal),
@@ -209,6 +212,14 @@ fn renderBlock(
 
 /// A quotation: a rule down its left edge for every level it is nested, so a
 /// quote inside a quote reads as two, then the text.
+/// The dot in front of an unnumbered item, on the first line's middle.
+fn bulletDot(s: *AppState, c: *ui.Context) void {
+    const wrap = ui.div(c).row().w(6).minW(6).pt(7).justifyCenter();
+    defer wrap.end();
+    const dot = ui.div(c).w(4).h(4).roundedFull().bg(s.palette.muted);
+    dot.end();
+}
+
 /// The room a numbered list gives its numbers: wide enough for `99.` at the
 /// body size (a digit is about eight points, the dot four), and still narrow
 /// enough that a short list's text stays close to a bullet's. A three-digit
@@ -229,19 +240,32 @@ fn isOrderedMarker(marker: []const u8) bool {
 /// The reader marks what a run *is* — `mono` for code, `underline` for a link —
 /// and the colours are the view's business, because only the view knows the
 /// theme. A span that already named a colour of its own keeps it.
-pub fn deckInline(c: *ui.Context, spans: []const ui.Span, code_bg: ui.Color, link: ui.Color) []const ui.Span {
-    if (spans.len == 0) return &.{};
-    var any = false;
-    for (spans) |sp| {
-        if (sp.mono and sp.background == null) any = true;
-        if (sp.underline and sp.color == null) any = true;
+pub fn deckInline(
+    c: *ui.Context,
+    spans: []const ui.Span,
+    anchors: []const md.Anchor,
+    code_bg: ui.Color,
+    link: ui.Color,
+    note: ui.Color,
+) []const ui.Span {
+    // A reference is a badge: its range comes from the anchor, because the
+    // reader records where it stands and not what it should look like.
+    var notes: usize = 0;
+    for (anchors) |a| {
+        if (a.mark == .footnote) notes += 1;
     }
-    if (!any) return spans;
-    const out = c.alloc().alloc(ui.Span, spans.len) catch return spans;
+    if (spans.len == 0 and notes == 0) return &.{};
+    const out = c.alloc().alloc(ui.Span, spans.len + notes) catch return spans;
     for (spans, 0..) |sp, i| {
         out[i] = sp;
         if (sp.mono and sp.background == null) out[i].background = code_bg;
         if (sp.underline and sp.color == null) out[i].color = link;
+    }
+    var at = spans.len;
+    for (anchors) |a| {
+        if (a.mark != .footnote) continue;
+        out[at] = .{ .start = a.start, .end = a.end, .color = note, .background = note.alpha(0.16) };
+        at += 1;
     }
     return out;
 }
@@ -269,10 +293,26 @@ fn checkbox(s: *AppState, c: *ui.Context, done: bool) void {
 
 /// A task item that is done reads as done: its text is quieter and struck
 /// through, the way a checklist shows its finished lines.
-fn taskDoneStyle(s: *AppState, block: md.Block) ui.TextStyle {
+///
+/// The strike goes on the spans rather than the style, because a text style
+/// has no strike of its own: one span over the whole run does it, and it is
+/// drawn under the spans the reader already recorded, so emphasis and code
+/// inside a finished item keep their own weight and colour.
+fn struckText(s: *AppState, c: *ui.Context, block: md.Block) void {
     var style = blockStyle(s, block);
     style.color = s.palette.muted;
-    return style;
+    const all = c.alloc().alloc(ui.Span, block.spans.len + 1) catch {
+        anchoredText(s, c, block, style);
+        return;
+    };
+    for (block.spans, 0..) |sp, i| all[i] = sp;
+    all[block.spans.len] = .{
+        .start = 0,
+        .end = @intCast(block.text.len),
+        .strike = true,
+        .color = s.palette.muted,
+    };
+    anchoredRun(s, c, block.text, all, block.anchors, style);
 }
 
 fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
@@ -341,7 +381,7 @@ fn anchoredRun(
             // `panel` rather than `raised`: a pill has to be readable as a chip
             // on the page, and `raised` sits too close to the page colour to tell
             // it from a compression artifact.
-            .spans = deckInline(c, spans, s.palette.panel, s.palette.accent),
+            .spans = deckInline(c, spans, anchors, s.palette.panel, s.palette.accent, s.palette.accent),
         },
     }, null);
     if (anchors.len == 0) return;
@@ -529,8 +569,12 @@ fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         }
     }
 
-    for (block.table_rows) |row| {
+    for (block.table_rows, 0..) |row, r| {
         const body = ui.div(c).row().wFull().px(design.Spacing.md).py(design.Spacing.sm).gap(design.Spacing.md).borderW(1).border(pal.code_border);
+        // Every other row carries a tint: across a table wider than the
+        // column, a row is followed by eye, and the separators alone stop
+        // being enough at about six columns.
+        if (r % 2 == 1) body.c.node(body.index).style.background = pal.text_primary.alpha(0.035);
         defer body.end();
         for (0..n) |i| {
             tableCell(s, c, if (i < row.len) row[i] else .{ .text = "" }, layout.widths[i], .{

@@ -78,7 +78,7 @@ fn notes(s: *AppState, c: *ui.Context, scroller_id: u64, scroller_rect: ?ui.Rect
         if (back.clicked) s.returnToReference(note.number);
 
         ui.textf(c, .{ .size = design.FontSize.xs, .color = s.palette.accent, .tabular = true }, "{d}", .{note.number});
-        ui.richText(c, if (note.text.len > 0) note.text else "(no text)", message.deckInline(c, note.spans, s.palette.panel, s.palette.accent), .{
+        ui.richText(c, if (note.text.len > 0) note.text else "(no text)", message.deckInline(c, note.spans, &.{}, s.palette.panel, s.palette.accent, s.palette.accent), .{
             .size = design.FontSize.xs,
             .color = s.palette.muted,
             .wrap = true,

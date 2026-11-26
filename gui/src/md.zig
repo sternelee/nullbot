@@ -625,7 +625,9 @@ const Builder = struct {
         const from: u32 = @intCast(b.out.items.len);
         try b.put(marker);
         const to: u32 = @intCast(b.out.items.len);
-        try b.spans.append(b.a, .{ .start = from, .end = to, .color = .{ .r = 0.45, .g = 0.5, .b = 0.6, .a = 1 } });
+        // No span, and so no colour: a reference is drawn as a badge in the
+        // theme's accent, from the anchor recorded below. A fixed grey here
+        // stayed grey on every theme.
         try b.anchors.append(b.a, .{ .mark = .footnote, .start = from, .end = to, .label = b.notes.defs.items[i].label, .target = marker, .number = number });
         try b.refs.append(b.a, .{ .label = b.notes.defs.items[i].label, .start = from, .end = to });
         b.start = to;

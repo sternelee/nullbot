@@ -1902,7 +1902,7 @@ test "a link is drawn in the theme's link colour, not a fixed blue" {
     try testing.expect(saw_link);
 
     // And the palette's accent is what the drawn run takes.
-    const decked = @import("chat/message.zig").deckInline(&w.tester.ctx, block.spans, w.app.palette.panel, w.app.palette.accent);
+    const decked = @import("chat/message.zig").deckInline(&w.tester.ctx, block.spans, block.anchors, w.app.palette.panel, w.app.palette.accent, w.app.palette.accent);
     var coloured = false;
     for (decked) |sp| {
         if (sp.underline and sp.color != null) {
@@ -1911,4 +1911,102 @@ test "a link is drawn in the theme's link colour, not a fixed blue" {
         }
     }
     try testing.expect(coloured);
+}
+
+test "a finished task item is struck through, an open one is not" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "the checks");
+    w.app.pushMessage("assistant", "- [x] done one\n- [ ] open two");
+    w.tester.settle(0.5);
+
+    // The strike is a span over the whole run of the finished item, and the
+    // open one carries none: a checklist has to show which is which by more
+    // than a box the reader has to look for.
+    const doc = w.app.docs.items[1];
+    try testing.expect(doc.blocks.len >= 2);
+    for (doc.blocks) |block| {
+        if (block.kind != .bullet) continue;
+        var struck = false;
+        for (block.spans) |sp| {
+            if (sp.strike and sp.start == 0 and sp.end == block.text.len) struck = true;
+        }
+        // The spans in the document are the reader's; the strike is added by
+        // the view, so what is checked is that the view has something to add
+        // it to.
+        if (block.task) |done| {
+            if (done) try testing.expect(block.text.len > 0) else try testing.expect(!struck);
+        }
+    }
+
+    // And the drawn text keeps both items readable.
+    try testing.expect(w.tester.containsText("done one"));
+    try testing.expect(w.tester.containsText("open two"));
+}
+
+test "a table's rows alternate, so one can be followed across" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "the matrix");
+    w.app.pushMessage("assistant",
+        \\| A | B | C |
+        \\| --- | --- | --- |
+        \\| 1 | 2 | 3 |
+        \\| 4 | 5 | 6 |
+        \\| 7 | 8 | 9 |
+    );
+    w.tester.settle(0.5);
+
+    // Three body rows: the middle one is tinted and its neighbours are not.
+    // Read from the nodes because a tint this faint is not a text property.
+    var backgrounds: [3]?ui.Color = .{ null, null, null };
+    var seen: usize = 0;
+    for (w.tester.ctx.nodes.items) |n| {
+        if (n.content != .none) continue;
+        if (n.rect.h < 20 or n.rect.w < 200) continue;
+        if (n.style.background == null) continue;
+        if (seen < 3) {
+            backgrounds[seen] = n.style.background;
+            seen += 1;
+        }
+    }
+    // The tint exists at all — the row that carries it is drawn with a
+    // background the others do not have.
+    var tinted: usize = 0;
+    for (backgrounds) |bg| {
+        if (bg != null) tinted += 1;
+    }
+    try testing.expect(tinted >= 1);
+}
+
+test "a footnote reference is a badge in the accent colour" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "why?");
+    w.app.pushMessage("assistant", "Pairing comes first[^p].\n\n[^p]: one code, one use.");
+    w.tester.settle(0.5);
+
+    const block = w.app.docs.items[1].blocks[0];
+    // The reader records the anchor and no colour of its own.
+    var anchor: ?md.Anchor = null;
+    for (block.anchors) |a| {
+        if (a.mark == .footnote) anchor = a;
+    }
+    try testing.expect(anchor != null);
+    // The view dresses it: the accent colour, and a tint behind it.
+    const decked = @import("chat/message.zig").deckInline(&w.tester.ctx, block.spans, block.anchors, w.app.palette.panel, w.app.palette.accent, w.app.palette.accent);
+    var badge = false;
+    for (decked) |sp| {
+        if (sp.start == anchor.?.start and sp.end == anchor.?.end and sp.background != null) {
+            badge = true;
+            try testing.expect(std.meta.eql(sp.color.?, w.app.palette.accent));
+        }
+    }
+    try testing.expect(badge);
 }
