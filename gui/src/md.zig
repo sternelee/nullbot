@@ -31,16 +31,24 @@ pub const Block = struct {
     /// For an image block: the picture's alt text and where it is.
     image_alt: []const u8 = "",
     image_url: []const u8 = "",
-    /// For tables: the header row's cells; rows follow in `text` as lines.
-    table_header: []const []const u8 = &.{},
+    /// For tables: the header row's cells, and the body rows under it.
+    table_header: []const Cell = &.{},
     /// For tables: per-column alignment, parallel to `table_header`.
     table_align: []const Align = &.{},
     /// For tables: the parsed body rows, parallel cells to `table_header`.
-    table_rows: []const []const []const u8 = &.{},
+    table_rows: []const []const Cell = &.{},
     /// Footnote references in this block (`[^label]`), with the byte range
     /// of the reference's rendered marker in `text`.
     refs: []const FootnoteRef = &.{},
     /// Clickable ranges of `text`: footnote references and links.
+    anchors: []const Anchor = &.{},
+};
+
+/// One table cell: its text with the inline markup read, so a code span, a
+/// link or a footnote reference inside a cell is drawn as it is in prose.
+pub const Cell = struct {
+    text: []const u8,
+    spans: []ui.Span = &.{},
     anchors: []const Anchor = &.{},
 };
 
@@ -150,6 +158,20 @@ const Parser = struct {
         try p.blocks.append(p.a, b);
     }
 
+    /// A table row's cells, each read as inline text: a code span and a link
+    /// belong in a cell as much as in a paragraph.
+    fn cells(p: *Parser, raw: []const []const u8) ![]const Cell {
+        const out = try p.a.alloc(Cell, raw.len);
+        for (raw, 0..) |text, i| {
+            const inlined = try p.inl(text);
+            out[i] = .{ .text = inlined.text, .spans = inlined.spans, .anchors = p.anchors.items };
+            // Anchors and references are per cell, so each starts its own.
+            p.anchors = .empty;
+            p.refs = .empty;
+        }
+        return out;
+    }
+
     /// One block's inline text: emphasis, links and footnote references.
     fn inl(p: *Parser, src: []const u8) !Inline {
         var b = Builder{ .a = p.a, .notes = &p.notes, .refs = &p.refs, .anchors = &p.anchors };
@@ -225,14 +247,15 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
             const sep_line = std.mem.trimStart(u8, std.mem.trimEnd(u8, p.lines.peek() orelse "", " \t\r"), " \t");
             if (isTableSeparator(sep_line)) {
                 _ = p.lines.next();
-                const header = try splitTableRow(a, trimmed);
-                const alignment = try separatorAlign(a, sep_line, header.len);
-                var rows: std.ArrayListUnmanaged([]const []const u8) = .empty;
+                const header_raw = try splitTableRow(a, trimmed);
+                const alignment = try separatorAlign(a, sep_line, header_raw.len);
+                const header = try p.cells(header_raw);
+                var rows: std.ArrayListUnmanaged([]const Cell) = .empty;
                 while (p.lines.peek()) |row_raw| {
                     const row = std.mem.trim(u8, row_raw, " \t\r");
                     if (row.len == 0 or !isTableRow(row)) break;
                     _ = p.lines.next();
-                    try rows.append(a, try splitTableRow(a, row));
+                    try rows.append(a, try p.cells(try splitTableRow(a, row)));
                 }
                 try p.addBlock(.{ .kind = .table, .text = "", .table_header = header, .table_align = alignment, .table_rows = rows.items });
                 continue;
@@ -1402,15 +1425,15 @@ test "tables are parsed into cells, with each column's alignment" {
     const table = doc.blocks[0];
     try testing.expectEqual(Kind.table, table.kind);
     try testing.expectEqual(@as(usize, 3), table.table_header.len);
-    try testing.expectEqualStrings("Name", table.table_header[0]);
-    try testing.expectEqualStrings("Note", table.table_header[2]);
+    try testing.expectEqualStrings("Name", table.table_header[0].text);
+    try testing.expectEqualStrings("Note", table.table_header[2].text);
     try testing.expectEqual(@as(usize, 3), table.table_align.len);
     try testing.expectEqual(Align.left, table.table_align[0]);
     try testing.expectEqual(Align.right, table.table_align[1]);
     try testing.expectEqual(Align.center, table.table_align[2]);
     try testing.expectEqual(@as(usize, 2), table.table_rows.len);
-    try testing.expectEqualStrings("Ada", table.table_rows[0][0]);
-    try testing.expectEqualStrings("second", table.table_rows[1][2]);
+    try testing.expectEqualStrings("Ada", table.table_rows[0][0].text);
+    try testing.expectEqualStrings("second", table.table_rows[1][2].text);
     // The paragraph after the table is still read, and the blank line between is not a block.
     try testing.expectEqual(Kind.paragraph, doc.blocks[1].kind);
     try testing.expectEqualStrings("after", textOf(&doc, 1));
@@ -1421,7 +1444,7 @@ test "a table cell may contain an escaped pipe, and a short row is padded" {
     defer doc.deinit();
     const table = doc.blocks[0];
     try testing.expectEqual(@as(usize, 1), table.table_rows.len);
-    try testing.expectEqualStrings("x | y", table.table_rows[0][0]);
+    try testing.expectEqualStrings("x | y", table.table_rows[0][0].text);
 }
 
 test "a piped line with no separator is a paragraph" {

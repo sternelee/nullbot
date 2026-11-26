@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 154 tests, headless
+zig build test       # 157 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -71,6 +71,7 @@ the app runs:
 | `02b-chat-table.png` | A table with per-column alignment, a nested checklist and a footnote |
 | `02c-chat-wide-table.png` | A table too wide for the column: it scrolls sideways, and a note carries the way back |
 | `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
+| `02e-chat-headings.png` | Six heading ranks, and a code block with its language and Copy button |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -116,8 +117,9 @@ The configuration page edits the settings that matter — provider, model, API
 key, gateway, workspace, MCP servers, cron, skills and capabilities — and has a
 pinned action bar with Save & restart, Apply and Reload.
 
-The markdown an agent writes is drawn, not echoed: headings, lists (nested,
-numbered, and `- [x]` checkboxes), tables with their columns aligned by the
+The markdown an agent writes is drawn, not echoed: headings at six ranks (each a
+size, a weight and its own leading), lists (nested, numbered, and `- [x]`
+checkboxes), tables with their columns aligned by the
 separator's colons, sized to their content and scrolling sideways when they
 outgrow the column, `<br>` hard breaks, quotations that nest one edge deeper
 per level, thematic breaks with room around them, code highlighted by the

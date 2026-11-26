@@ -40,7 +40,9 @@ pub fn render(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.
         });
         if (copy.clicked) {
             c.clipboard.write(c.clipboard.ctx, block.text);
-            s.say("Copied code");
+            // What went on the clipboard, said back: a reply can hold several
+            // blocks, and "Copied code" alone does not say which.
+            s.sayf("Copied the {s} block", .{if (block.lang.len > 0) block.lang else "code"});
         }
     }
 

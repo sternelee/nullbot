@@ -752,6 +752,81 @@ test "a picture from a path is decoded and drawn, and a missing one says why" {
     try testing.expect(w.tester.hasText("FileNotFound"));
 }
 
+test "a code block's Copy puts the code on the clipboard" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "show me");
+    w.app.pushMessage("assistant",
+        \\```zig
+        \\const key = "abc";
+        \\```
+    );
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.hasText("Copy"));
+    w.tester.clipboard.clearRetainingCapacity();
+    try w.tester.clickText("Copy");
+    w.tester.settle(0.3);
+
+    // The code, exactly as it was written: no fence, no highlighting, and
+    // the same bytes that a paste into an editor would give.
+    try testing.expectEqualStrings("const key = \"abc\";", w.tester.clipboard.items);
+    try testing.expect(w.app.toast.len > 0);
+    try testing.expect(std.mem.indexOf(u8, w.app.toast, "zig") != null);
+}
+
+test "a link inside a table cell opens like one in a paragraph" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "where?");
+    w.app.pushMessage("assistant",
+        \\| Provider | Docs |
+        \\| --- | --- |
+        \\| openrouter | https://example.com/providers |
+    );
+    w.tester.settle(0.5);
+    w.app.toast = w.app.gpa.dupe(u8, "") catch w.app.toast;
+
+    // The cell keeps the URL as its text, and the anchor over it takes a click.
+    try testing.expect(w.tester.containsText("https://example.com/providers"));
+    try w.tester.clickText("https://example.com/providers");
+    w.tester.settle(0.3);
+    try testing.expect(w.app.toast.len > 0);
+    try testing.expect(std.mem.indexOf(u8, w.app.toast, "example.com") != null);
+}
+
+test "each heading level is drawn smaller than the one above it" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "the ranks");
+    w.app.pushMessage("assistant",
+        \\# One
+        \\## Two
+        \\### Three
+        \\#### Four
+        \\##### Five
+        \\###### Six
+    );
+    w.tester.settle(0.5);
+
+    // A line's height is its font's: six ranks have to be six heights.
+    const names = [_][]const u8{ "One", "Two", "Three", "Four", "Five", "Six" };
+    var last: f32 = std.math.inf(f32);
+    for (names) |name| {
+        const h = w.tester.findText(name).?.h;
+        try testing.expect(h < last);
+        last = h;
+    }
+    // And the top rank stands clear of a paragraph's own size.
+    try testing.expect(w.tester.findText("One").?.h > w.tester.findText("Six").?.h * 1.4);
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();

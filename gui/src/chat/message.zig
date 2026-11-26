@@ -168,7 +168,18 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
             ui.icon(c, "text.quote", .{ .size = 10, .color = s.palette.faint });
             ui.text(c, block.text, .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true, .leading = 1.4 });
         },
-        .heading, .paragraph => anchoredText(s, c, block, blockStyle(s, block)),
+        .heading => {
+            // Air above a heading, more for the higher ranks, so a section
+            // starts rather than running on from the paragraph before it.
+            if (block.level <= 3) {
+                const pad = ui.div(c).column().wFull().pt(if (block.level <= 2) 10 else 4);
+                defer pad.end();
+                anchoredText(s, c, block, headingStyle(s, block.level));
+            } else {
+                anchoredText(s, c, block, headingStyle(s, block.level));
+            }
+        },
+        .paragraph => anchoredText(s, c, block, blockStyle(s, block)),
     }
 }
 
@@ -226,41 +237,61 @@ fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
 /// are found by measuring it — the same wrap the text system laid out —
 /// and an invisible box is placed over each range, as a link on a page.
 fn anchoredText(s: *AppState, c: *ui.Context, block: md.Block, style: ui.TextStyle) void {
+    anchoredRun(s, c, block.text, block.spans, block.anchors, style);
+}
+
+/// A run of text whose `anchors` are live: a footnote reference jumps to its
+/// note, a link opens in the browser. The text is one leaf, so the ranges are
+/// found by measuring it — the same wrap the text system laid out — and an
+/// invisible box is placed over each, as a link on a page.
+///
+/// Split from `anchoredText` because a table cell is a run too, and a link in
+/// a cell has to be as clickable as one in a paragraph.
+fn anchoredRun(
+    s: *AppState,
+    c: *ui.Context,
+    text: []const u8,
+    spans: []const ui.Span,
+    anchors: []const md.Anchor,
+    style: ui.TextStyle,
+) void {
     const box = ui.div(c).column().grow().minW(0);
     defer box.end();
 
     // Its own leaf rather than `ui.richText`, which discards the index the
     // anchors are measured from.
     const idx = c.leaf(.{ .width = .fill }, .{ .text = .{
-        .str = block.text,
+        .str = text,
         .style = style,
         .color = style.color orelse s.palette.text,
-        .spans = block.spans,
+        .spans = spans,
     } }, null);
-    if (block.anchors.len == 0) return;
+    if (anchors.len == 0) return;
 
     const it = c.interact(idx, .{});
     const r = it.rect orelse return;
     // Wrap the text in the width it was given, so a range that crosses a
     // line break becomes one box per line.
-    const lines = c.text.wrapAttributed(block.text, style, block.spans, r.w);
+    const lines = c.text.wrapAttributed(text, style, spans, r.w);
     if (lines.len == 0) return;
     const lh = c.text.lineHeight(style);
 
-    for (block.anchors) |a| {
-        const from = @min(a.start, block.text.len);
-        const to = @min(a.end, block.text.len);
+    for (anchors) |a| {
+        const from = @min(a.start, text.len);
+        const to = @min(a.end, text.len);
         for (lines, 0..) |line, i| {
             // A line that holds none of this range is skipped: the wrap's
             // lines do not overlap, and a range can span several.
             if (to <= line.start or from >= line.end) continue;
             const lo = @max(from, line.start);
             const hi = @min(to, line.end);
-            const x0 = c.text.caretX(block.text[line.start..line.end], style, lo - line.start);
-            const x1 = c.text.caretX(block.text[line.start..line.end], style, hi - line.start);
+            const x0 = c.text.caretX(text[line.start..line.end], style, lo - line.start);
+            const x1 = c.text.caretX(text[line.start..line.end], style, hi - line.start);
             if (x1 <= x0) continue;
             const y = @as(f32, @floatFromInt(i)) * lh;
-            const hit = ui.div(c).absolute().offset(x0, y).w(x1 - x0).h(lh);
+            // A point of slack on each side: a one-character link (`a`) would
+            // otherwise be a hit box a few points wide and nearly unclickable.
+            const hit = ui.div(c).absolute().offset(x0 - 1, y).w(x1 - x0 + 2).h(lh);
             const target = hit.interaction();
             if (target.clicked) switch (a.mark) {
                 .footnote => s.jumpToFootnote(a.number),
@@ -320,8 +351,6 @@ fn renderImage(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         });
         ui.spacer(c);
         if (!drawn) {
-            // Why it is not there, in the tooltip's place: the reason is the
-            // useful part, and the row's right edge is where a reader looks.
             ui.text(c, entry.failure orelse "unsupported format", .{
                 .size = design.FontSize.xs,
                 .color = s.palette.faint,
@@ -351,12 +380,7 @@ fn renderImage(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
     }
 }
 
-/// A table, sized to what it holds. Its columns take the room their widest
-/// cell asks for; when the whole would run past the window, the table keeps
-/// that width and scrolls sideways instead of squeezing every cell until the
-/// words break. A table that fits scrolls nothing.
 fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
-    _ = s;
     if (block.table_header.len == 0) return;
     const n = block.table_header.len;
 
@@ -401,7 +425,7 @@ fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         head.c.node(head.index).style.background = pal.bg_tertiary;
         defer head.end();
         for (block.table_header, 0..) |cell, i| {
-            tableCell(c, cell, layout.widths[i], .{
+            tableCell(s, c, cell, layout.widths[i], .{
                 .size = design.FontSize.sm,
                 .weight = .semibold,
                 .color = pal.text_primary,
@@ -414,8 +438,7 @@ fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         const body = ui.div(c).row().wFull().px(design.Spacing.md).py(design.Spacing.sm).gap(design.Spacing.md).borderW(1).border(pal.code_border);
         defer body.end();
         for (0..n) |i| {
-            const cell = if (i < row.len) row[i] else "";
-            tableCell(c, cell, layout.widths[i], .{
+            tableCell(s, c, if (i < row.len) row[i] else .{ .text = "" }, layout.widths[i], .{
                 .size = design.FontSize.sm,
                 .color = pal.text_primary,
                 .wrap = true,
@@ -442,12 +465,12 @@ fn measureColumns(c: *ui.Context, block: md.Block, n: usize) ColumnLayout {
     const header_style: ui.TextStyle = .{ .size = design.FontSize.sm, .weight = .semibold };
     const body_style: ui.TextStyle = .{ .size = design.FontSize.sm };
     for (block.table_header, 0..) |cell, i| {
-        if (i < n) widths[i] = c.text.layout(cell, header_style).width;
+        if (i < n) widths[i] = c.text.layout(cell.text, header_style).width;
     }
     for (block.table_rows) |row| {
         for (row, 0..) |cell, i| {
             if (i >= n) break;
-            widths[i] = @max(widths[i], c.text.layout(cell, body_style).width);
+            widths[i] = @max(widths[i], c.text.layout(cell.text, body_style).width);
         }
     }
     // A cell wraps rather than pushing its column past this, which keeps a
@@ -470,10 +493,10 @@ const Align = @TypeOf(@as(ui.Style, .{}).align_items);
 /// colons. The room the text leaves over becomes a leading gap, because a
 /// wrapped leaf fills its box — `align_items` cannot move glyphs that start
 /// at the leaf's own left edge.
-fn tableCell(c: *ui.Context, text: []const u8, width: f32, style: ui.TextStyle, side: Align) void {
+fn tableCell(s: *AppState, c: *ui.Context, cell_in: md.Cell, width: f32, style: ui.TextStyle, side: Align) void {
     const cell = ui.div(c).row().w(width).minW(width).maxW(width);
     defer cell.end();
-    const content = c.text.layout(text, style).width;
+    const content = c.text.layout(cell_in.text, style).width;
     const slack = @max(0, width - content);
     const lead = switch (side) {
         .start, .stretch => 0,
@@ -484,7 +507,9 @@ fn tableCell(c: *ui.Context, text: []const u8, width: f32, style: ui.TextStyle, 
         const gap = ui.div(c).w(lead);
         gap.end();
     }
-    ui.text(c, text, style);
+    // The same run the prose uses, so a code span or a link in a cell is
+    // drawn and clickable exactly as it is in a paragraph.
+    anchoredRun(s, c, cell_in.text, cell_in.spans, cell_in.anchors, style);
 }
 
 fn alignOf(block: md.Block, i: usize) Align {
@@ -496,20 +521,41 @@ fn alignOf(block: md.Block, i: usize) Align {
     };
 }
 
+/// A heading's size and weight, one step per level. The scale is the thing
+/// that says what a heading is: a reply with `#`, `##` and `###` has to read as
+/// three ranks, and the first two also carry a little air above them so a
+/// heading that follows a paragraph starts a section rather than continuing
+/// one.
+fn headingStyle(s: *AppState, level: u8) ui.TextStyle {
+    // Whole points, a step apart: a line box rounds to the point, so 13.5 and
+    // 13 came out the same height and the last two ranks were one size.
+    const size: f32 = switch (level) {
+        1 => 21,
+        2 => 18,
+        3 => 16,
+        4 => 15,
+        5 => 14,
+        else => 13,
+    };
+    const weight: ui.Weight = switch (level) {
+        1, 2, 3 => .semibold,
+        4, 5 => .medium,
+        else => .regular,
+    };
+    return .{
+        .size = size,
+        .weight = weight,
+        .color = if (level >= 6) s.palette.muted else s.palette.text,
+        .wrap = true,
+        // Bigger type needs proportionally less leading, so the block reads
+        // as one line of a rank rather than as a paragraph that got louder.
+        .leading = if (level <= 2) 1.22 else 1.3,
+    };
+}
+
 fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
     return switch (block.kind) {
-        .heading => .{
-            .size = switch (block.level) {
-                1 => 17,
-                2 => 15.5,
-                3 => 14.5,
-                else => 13.5,
-            },
-            .weight = .semibold,
-            .color = s.palette.text,
-            .wrap = true,
-            .leading = 1.35,
-        },
+        .heading => headingStyle(s, block.level),
         .code => .{ .size = design.FontSize.sm, .mono = true, .color = s.palette.text, .wrap = true, .leading = 1.45 },
         .quote => .{ .size = 13.5, .italic = true, .color = s.palette.muted, .wrap = true, .leading = 1.45 },
         .bullet => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },

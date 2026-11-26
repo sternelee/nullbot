@@ -120,6 +120,32 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02b-chat-table");
 
+    // Six ranks of heading, and a code block whose Copy button is part of the
+    // shot: the hierarchy a reply is read by, and the one control it has.
+    w.app.newChat();
+    w.app.pushMessage("user", "How is a reply structured?");
+    w.app.pushMessage("assistant",
+        \\# Session startup
+        \\
+        \\## What the runtime reads
+        \\
+        \\### The workspace
+        \\
+        \\#### Required files
+        \\
+        \\##### Order
+        \\
+        \\###### Notes
+        \\
+        \\Each step is one read:
+        \\
+        \\```zig
+        \\try bootstrap.load(workspace);
+        \\```
+    );
+    w.tester.settle(0.5);
+    try shoot(&w, "02e-chat-headings");
+
     // A table wider than the window keeps its columns and scrolls sideways,
     // a `<br>` breaks a line where it stands, and a note carries the way back
     // to the sentence that cited it.
