@@ -138,14 +138,56 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         .bullet => {
             const row = ui.div(c).row().wFull().gap(7);
             defer row.end();
+            // Indent nested bullets.
+            if (block.indent > 0) {
+                _ = ui.div(c).w(@as(f32, @floatFromInt(block.indent)) * 16);
+            }
             // A middle dot rather than "•": the bundled font has no glyph for
             // the bullet and fell back to a degree sign.
             ui.text(c, "·", .{ .size = 13.5, .color = s.palette.muted });
             ui.text(c, block.text, blockStyle(s, block));
         },
+        .table => {
+            renderTable(s, c, block, pal);
+        },
+        .footnote => {
+            const row = ui.div(c).row().wFull().gap(6);
+            defer row.end();
+            ui.icon(c, "text.quote", .{ .size = 10, .color = s.palette.faint });
+            ui.text(c, block.text, .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true, .leading = 1.4 });
+        },
         .heading, .paragraph => {
             ui.richText(c, block.text, block.spans, blockStyle(s, block));
         },
+    }
+}
+
+fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
+    _ = s;
+    const box = ui.div(c).column().wFull().rounded(design.Radius.md)
+        .bg(pal.code_bg).borderW(1).border(pal.code_border).clip();
+    defer box.end();
+
+    // Header row.
+    {
+        const head = ui.div(c).row().wFull().gap(design.Spacing.sm).px(design.Spacing.md).py(design.Spacing.sm).bg(pal.bg_tertiary);
+        defer head.end();
+        for (block.table_header) |cell| {
+            ui.text(c, cell, .{ .size = design.FontSize.sm, .weight = .semibold, .color = pal.text_primary, .wrap = true });
+        }
+    }
+
+    // Body rows: each line of block.text is a row of pipe-separated cells.
+    var lines = std.mem.splitScalar(u8, block.text, '\n');
+    while (lines.next()) |row_line| {
+        if (row_line.len == 0) continue;
+        const row = ui.div(c).row().wFull().gap(design.Spacing.sm).px(design.Spacing.md).py(design.Spacing.sm).borderW(1).border(pal.code_border);
+        defer row.end();
+        var cells = std.mem.splitScalar(u8, row_line, '|');
+        while (cells.next()) |cell_raw| {
+            const cell = std.mem.trim(u8, cell_raw, " \t");
+            ui.text(c, cell, .{ .size = design.FontSize.sm, .color = pal.text_primary, .wrap = true });
+        }
     }
 }
 
@@ -168,5 +210,7 @@ fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
         .bullet => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },
         .rule => .{ .size = 13.5, .color = s.palette.faint, .wrap = true },
         .paragraph => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },
+        .table => .{ .size = design.FontSize.sm, .color = s.palette.text, .wrap = true },
+        .footnote => .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true, .leading = 1.4 },
     };
 }
