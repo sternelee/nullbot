@@ -93,6 +93,32 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02-chat-markdown");
 
+    // A quoted passage, a numbered list, and a break between sections: the
+    // three shapes prose uses to hand something to someone else.
+    w.app.newChat();
+    w.app.pushMessage("user", "What does the security model say?");
+    w.app.pushMessage("assistant",
+        \\## The shape of a deployment
+        \\
+        \\> A gateway that is not exposed cannot be attacked. Bind it to
+        \\> `127.0.0.1`, pair once, and reach it through a tunnel — the three
+        \\> rules that follow are consequences of that one.
+        \\
+        \\---
+        \\
+        \\The checks, in the order a request meets them:
+        \\
+        \\8. the tunnel terminates the TLS session
+        \\9. the gateway verifies the bearer token
+        \\10. the tool layer re-checks the workspace scope
+        \\11. the sandbox runs the command, and nothing above it can widen it
+        \\
+        \\> > A quotation inside a quotation carries two edges, and the outer
+        \\> > one is the fainter of the two.
+    );
+    w.tester.settle(0.5);
+    try shoot(&w, "02f-chat-quote-list-rule");
+
     // A table, a nested list and a footnote: the three things an answer can
     // carry that a paragraph cannot show. The reference in the prose is a
     // link to the note under the reply.

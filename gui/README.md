@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 160 tests, headless
+zig build test       # 165 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -72,6 +72,7 @@ the app runs:
 | `02c-chat-wide-table.png` | A table too wide for the column: it scrolls sideways, and a note carries the way back |
 | `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
 | `02e-chat-headings.png` | Six heading ranks, and a long code block folded behind its count |
+| `02f-chat-quote-list-rule.png` | A quoted passage as one tinted block, a break, and a numbered list whose numbers share a gutter |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -121,8 +122,11 @@ The markdown an agent writes is drawn, not echoed: headings at six ranks (each a
 size, a weight and its own leading), lists (nested, numbered, and `- [x]`
 checkboxes), tables with their columns aligned by the
 separator's colons, sized to their content and scrolling sideways when they
-outgrow the column, `<br>` hard breaks, quotations that nest one edge deeper
-per level, thematic breaks with room around them, code highlighted by the
+outgrow the column, `<br>` hard breaks, quotations that are one tinted block
+with an edge down their left side — one edge per level of nesting, the
+outermost faintest — thematic breaks that keep air only where there is
+something to separate, ordered lists whose numbers are right-aligned in a
+gutter so `9.` and `10.` do not step the text out of line, code highlighted by the
 language its fence names (comments, strings, numbers, keywords, types,
 constants and calls, in colours mixed from the palette so every theme
 highlights in its own terms) and folded after fourteen lines behind a

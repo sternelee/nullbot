@@ -3,6 +3,7 @@ const testing = std.testing;
 const ui = @import("nanoui").ui;
 
 const state = @import("state.zig");
+const md = @import("md.zig");
 const backend = @import("backend.zig");
 const view = @import("view.zig");
 const harness = @import("harness.zig");
@@ -936,6 +937,99 @@ test "folding one block leaves another alone" {
     // One block opened, so one control still offers to open.
     try testing.expect(w.tester.hasText("Show all 20 lines"));
     try testing.expect(w.tester.hasText("Show fewer (6 more lines)"));
+}
+
+test "a quotation's lines are one block, not one block per line" {
+    var doc = try md.parse(testing.allocator,
+        \\> one sentence
+        \\> and its second line
+        \\> and its third
+    );
+    defer doc.deinit();
+
+    // One block: read line by line this was three, each with its own edge,
+    // and a quoted passage is one passage.
+    try testing.expectEqual(@as(usize, 1), doc.blocks.len);
+    try testing.expectEqual(md.Kind.quote, doc.blocks[0].kind);
+    try testing.expectEqualStrings("one sentence\nand its second line\nand its third", doc.blocks[0].text);
+}
+
+test "a deeper quotation starts a block of its own" {
+    var doc = try md.parse(testing.allocator,
+        \\> outer
+        \\> > inner
+        \\> outer again
+    );
+    defer doc.deinit();
+
+    try testing.expectEqual(@as(usize, 3), doc.blocks.len);
+    try testing.expectEqual(@as(u8, 0), doc.blocks[0].indent);
+    try testing.expectEqual(@as(u8, 1), doc.blocks[1].indent);
+    try testing.expectEqualStrings("inner", doc.blocks[1].text);
+    try testing.expectEqual(@as(u8, 0), doc.blocks[2].indent);
+}
+
+test "a quotation is drawn as one tinted block" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "quote me");
+    w.app.pushMessage("assistant", "before\n\n> one sentence\n> and its second line\n\nafter");
+    w.tester.settle(0.5);
+
+    // The lines are one leaf — one text node holding both — so the tint and
+    // the edge are not duplicated per line.
+    try testing.expect(w.tester.containsText("one sentence\nand its second line"));
+}
+
+test "ordered list numbers share a gutter, so the text lines up" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "the steps");
+    w.app.pushMessage("assistant", "8. eight\n9. nine\n10. ten\n11. eleven");
+    w.tester.settle(0.5);
+
+    // Every item's text starts at the same x, whether its number is one digit
+    // or two: the number is right-aligned in a fixed gutter.
+    const eight = w.tester.findText("eight").?;
+    const eleven = w.tester.findText("eleven").?;
+    try testing.expectApproxEqAbs(eight.x, eleven.x, 0.5);
+    // And the numbers themselves are right-aligned: `9.` ends where `11.` ends.
+    const nine = w.tester.findText("9.").?;
+    const ten = w.tester.findText("10.").?;
+    // A point of slack: the glyph widths are hinted, so the two right edges
+    // agree to within the rounding rather than exactly.
+    try testing.expectApproxEqAbs(nine.x + nine.w, ten.x + ten.w, 1.5);
+
+    // A bullet in the same reply is not mistaken for a number.
+    w.app.pushMessage("assistant", "- dashed");
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("·"));
+}
+
+test "a break leaves no air against the message's own edges" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // A message that is only a break: nothing above or below it inside the
+    // message, so it is a hairline rather than a band of margin.
+    w.app.pushMessage("user", "a break");
+    w.app.pushMessage("assistant", "---");
+    w.tester.settle(0.5);
+    const alone = w.tester.findText("a break").?;
+    try testing.expect(!w.tester.containsText("---"));
+
+    // Between two paragraphs it keeps its air, which is what separates them.
+    w.app.pushMessage("assistant", "above\n\n---\n\nbelow");
+    w.tester.settle(0.5);
+    const above = w.tester.findText("above").?;
+    const below = w.tester.findText("below").?;
+    try testing.expect(below.y - (above.y + above.h) > 20);
+    try testing.expect(above.y > alone.y);
 }
 
 test "a toast appears and goes away" {

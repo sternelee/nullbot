@@ -293,7 +293,24 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
         }
 
         if (quoteDepth(trimmed)) |q| {
-            const inlined = try p.inl(q.rest);
+            // Every following line of the same depth belongs to this quotation.
+            // Read line by line they would be separate blocks, and a quotation
+            // would be a stack of independently edged paragraphs rather than
+            // one quoted passage.
+            var joined: std.ArrayListUnmanaged(u8) = .empty;
+            try joined.appendSlice(a, q.rest);
+            while (p.lines.peek()) |next_raw| {
+                const next = std.mem.trimEnd(u8, next_raw, " \t\r");
+                const next_trimmed = std.mem.trimStart(u8, next, " \t");
+                const next_quote = quoteDepth(next_trimmed) orelse break;
+                if (next_quote.depth != q.depth) break;
+                _ = p.lines.next();
+                // A `>` with nothing after it is a paragraph break inside the
+                // quotation, which is what the blank line draws as.
+                try joined.append(a, '\n');
+                try joined.appendSlice(a, next_quote.rest);
+            }
+            const inlined = try p.inl(joined.items);
             try p.addBlock(.{ .kind = .quote, .text = inlined.text, .spans = inlined.spans, .indent = q.depth });
             continue;
         }

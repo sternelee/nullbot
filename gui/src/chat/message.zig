@@ -82,7 +82,7 @@ pub fn renderMessage(s: *AppState, c: *ui.Context, message: backend.Message, doc
 
     if (doc) |d| {
         const pal = theme.buildSemantic(s.palette);
-        for (d.blocks) |block| renderBlock(s, c, block, &pal);
+        for (d.blocks, 0..) |block, i| renderBlock(s, c, block, &pal, i, d.blocks.len);
     } else {
         ui.text(c, message.content, .{ .size = design.FontSize.md, .color = s.palette.text, .wrap = true, .leading = 1.55 });
     }
@@ -111,7 +111,7 @@ pub fn renderStreaming(s: *AppState, c: *ui.Context) void {
 
     if (doc) |d| {
         const pal = theme.buildSemantic(s.palette);
-        for (d.blocks) |block| renderBlock(s, c, block, &pal);
+        for (d.blocks, 0..) |block, i| renderBlock(s, c, block, &pal, i, d.blocks.len);
     } else {
         ui.text(c, s.stream_text.items, .{ .size = design.FontSize.md, .color = s.palette.text, .wrap = true, .leading = 1.55 });
     }
@@ -123,15 +123,26 @@ pub fn renderStreaming(s: *AppState, c: *ui.Context) void {
 }
 
 /// One markdown block, as the transcript draws it.
-fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
+fn renderBlock(
+    s: *AppState,
+    c: *ui.Context,
+    block: md.Block,
+    pal: *const design.SemanticColor,
+    index: usize,
+    count: usize,
+) void {
     switch (block.kind) {
         .rule => {
-            // A break reads as one only with room on both sides of it; drawn
-            // flush against the text above and below it looks like a stray
-            // underline.
-            const pad = ui.div(c).column().wFull().py(design.Spacing.md);
+            // A break reads as one only with room on the sides that have
+            // something to separate: flush against text it is a stray
+            // underline, and against the message's own edge it is margin.
+            const above: f32 = if (index > 0) design.Spacing.md else 0;
+            const below: f32 = if (index + 1 < count) design.Spacing.md else 0;
+            const pad = ui.div(c).column().wFull();
+            pad.c.node(pad.index).style.padding = .{ .top = above, .bottom = below };
             defer pad.end();
-            _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = s.palette.border }, .none, null);
+            // Softer than a border: a break is punctuation, not structure.
+            _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = s.palette.border.alpha(0.75) }, .none, null);
         },
         .code => code_block.render(s, c, block, pal),
         .quote => quoted(s, c, block),
@@ -147,6 +158,17 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
             }
             if (block.task) |done| {
                 checkbox(s, c, done);
+            } else if (isOrderedMarker(block.marker)) {
+                // A number sits at the right of a fixed gutter: `9.` and `10.`
+                // are different widths, and without the gutter every item
+                // below a two-digit one would step its text out of line.
+                const gutter = ui.div(c).row().w(ordered_gutter).minW(ordered_gutter).justifyEnd();
+                defer gutter.end();
+                ui.text(c, block.marker, .{
+                    .size = design.FontSize.md,
+                    .color = s.palette.muted,
+                    .tabular = true,
+                });
             } else {
                 // A middle dot rather than "•": the bundled font has no glyph
                 // for the bullet and fell back to a degree sign.
@@ -170,9 +192,11 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
         },
         .heading => {
             // Air above a heading, more for the higher ranks, so a section
-            // starts rather than running on from the paragraph before it.
-            if (block.level <= 3) {
-                const pad = ui.div(c).column().wFull().pt(if (block.level <= 2) 10 else 4);
+            // starts rather than running on from the paragraph before it. A
+            // heading that opens the message needs none: the bubble has it.
+            const air: f32 = if (index == 0) 0 else if (block.level <= 2) 10 else if (block.level <= 3) 4 else 0;
+            if (air > 0) {
+                const pad = ui.div(c).column().wFull().pt(air);
                 defer pad.end();
                 anchoredText(s, c, block, headingStyle(s, block.level));
             } else {
@@ -185,6 +209,20 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
 
 /// A quotation: a rule down its left edge for every level it is nested, so a
 /// quote inside a quote reads as two, then the text.
+/// The room a numbered list gives its numbers: wide enough for `99.` at the
+/// body size (a digit is about eight points, the dot four), and still narrow
+/// enough that a short list's text stays close to a bullet's. A three-digit
+/// number overflows it, which a reply long enough to reach item 100 has
+/// earned.
+const ordered_gutter: f32 = 24;
+
+/// Whether a bullet's marker is a list number (`3.`, `12)`) rather than a dot.
+fn isOrderedMarker(marker: []const u8) bool {
+    if (marker.len < 2) return false;
+    if (!std.ascii.isDigit(marker[0])) return false;
+    return std.mem.endsWith(u8, marker, ".") or std.mem.endsWith(u8, marker, ")");
+}
+
 /// A task item's box: a rounded square, filled and ticked when done, an
 /// outline when not. Drawn rather than written as a character, because the
 /// bundled font has no box glyph and a checkbox carries its state in shape as
@@ -216,7 +254,15 @@ fn taskDoneStyle(s: *AppState, block: md.Block) ui.TextStyle {
 
 fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
     const depth: usize = @as(usize, block.indent) + 1;
-    const row = ui.div(c).row().wFull().gap(design.Spacing.sm);
+    const row = ui.div(c).row().wFull().gap(design.Spacing.sm)
+        .py(design.Spacing.sm).pr(design.Spacing.md)
+        // A faint panel behind it: a quotation is someone else's words, and a
+        // tint is what says so when the prose is the same colour.
+        .bg(s.palette.panel.alpha(0.45));
+    // Rounded, but with no box of its own: the edge down its left side is the
+    // only structure a quotation needs, and a full border around the tint
+    // would draw that edge twice.
+    row.c.node(row.index).style.radius = design.Radius.sm;
     defer row.end();
     // The deeper a quote is, the quieter its outermost rule: the innermost is
     // the one the eye follows.
