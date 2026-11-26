@@ -51,6 +51,32 @@ shell out (`hardware`, `service`, `update`) look for a `nullclaw` in this order:
 `$NULLCLAW_BIN` (a stub or a checkout build; an empty value counts as unset), a
 `nullclaw` beside the window binary, then `PATH`.
 
+## Package for macOS
+
+```sh
+cd gui
+sh macos/package.sh                                  # version from `git describe`
+VERSION=0.2.0 sh macos/package.sh                     # or say it
+```
+
+That builds `NullClaw.app` and `NullClaw-macos-arm64.dmg` in `zig-out/package`,
+with the sha256 of the image beside it. The bundle holds one binary — the window
+links the runtime, so there is nothing to install next to it — plus its icon and
+the plist that names them.
+
+- The build targets `aarch64-macos.13.0` with `apple_m1`, and the script checks
+  the result with `vtool`: a cached artifact for another system would otherwise
+  ship under a plist that claims otherwise.
+- `macos/make-icon.sh` draws `macos/AppIcon.icns` from the repo's own
+  `nullclaw.png` with `sips` and `iconutil`; the script runs it when the picture
+  is newer than the icon. `pngquant`, when installed, takes the icon from about
+  1.5 MB to about 60 KB.
+- Signing is ad hoc by default. Set `CODESIGN_IDENTITY` to a Developer ID
+  Application identity to sign properly, and `NOTARY_PROFILE` (a profile saved
+  with `xcrun notarytool store-credentials`) or `NOTARY_KEY_PATH` /
+  `NOTARY_KEY_ID` / `NOTARY_ISSUER_ID` to notarize and staple both the app and
+  the image.
+
 The tests do not need a runtime installed either: `src/harness.zig` writes a stub
 `nullclaw` that answers the commands those pages run, and drives the real view
 against it, so the argv, the spawn, the JSON, the state and the drawing are all
