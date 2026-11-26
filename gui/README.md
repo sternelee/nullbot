@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 89 tests, headless
+zig build test       # 133 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -68,6 +68,7 @@ the app runs:
 | `01b-brand-menu.png` | The "nullclaw ⌄" menu: every non-chat page, including Configuration |
 | `01c-theme-menu.png` | The palette menu hung off the footer's palette button |
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
+| `02b-chat-table.png` | A table with per-column alignment, a nested checklist and a footnote |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -104,9 +105,23 @@ empty.
 - **Body**: a header with the page title and the chat / work mode tabs, the
   page itself, and a banner for the current toast.
 
+The composer completes as you type: `@` offers workspace files and `/` offers
+the runtime's slash commands, filtered by what follows. Up and Down move
+through the list, Return or Tab takes a candidate, Escape closes it, and
+taking one does not also send the message.
+
 The configuration page edits the settings that matter — provider, model, API
 key, gateway, workspace, MCP servers, cron, skills and capabilities — and has a
 pinned action bar with Save & restart, Apply and Reload.
+
+The markdown an agent writes is drawn, not echoed: headings, lists (nested,
+numbered, and `- [x]` checkboxes), quotations, rules, fenced code with its
+language, tables with their columns aligned by the separator's colons and
+sized to their content, footnotes (`[^label]`, numbered by where they are
+first cited, with a reference that scrolls to its note), strikethrough,
+images (as their alt text), and links — `[label](url)`, `<url>`, and the bare
+URLs, `www.` hosts and email addresses GFM links on its own. A link opens in
+the browser; a footnote reference jumps to the note under the reply.
 
 ## The pages, and what they run
 

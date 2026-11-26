@@ -129,66 +129,199 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
             _ = c.leaf(.{ .width = .fill, .height = .{ .px = 1 }, .background = s.palette.border }, .none, null);
         },
         .code => code_block.render(s, c, block, pal),
-        .quote => {
-            const row = ui.div(c).row().wFull().gap(design.Spacing.sm);
-            defer row.end();
-            _ = c.leaf(.{ .width = .{ .px = 2 }, .height = .fill, .background = s.palette.accent.alpha(0.6) }, .none, null);
-            ui.text(c, block.text, blockStyle(s, block));
-        },
+        .quote => quoted(s, c, block),
         .bullet => {
             const row = ui.div(c).row().wFull().gap(7);
             defer row.end();
-            // Indent nested bullets.
+            // Nested bullets step in, two spaces a level, as they were written.
+            // A spacer rather than an empty box: a `ui.div` opened for its
+            // width alone still has to be ended, and one left open is a panic.
             if (block.indent > 0) {
-                _ = ui.div(c).w(@as(f32, @floatFromInt(block.indent)) * 16);
+                const pad = ui.div(c).w(@as(f32, @floatFromInt(block.indent)) * 16);
+                pad.end();
             }
             // A middle dot rather than "•": the bundled font has no glyph for
             // the bullet and fell back to a degree sign.
-            ui.text(c, "·", .{ .size = 13.5, .color = s.palette.muted });
-            ui.text(c, block.text, blockStyle(s, block));
+            ui.text(c, if (block.marker.len > 0) block.marker else "·", .{
+                .size = design.FontSize.md,
+                .color = s.palette.muted,
+            });
+            anchoredText(s, c, block, blockStyle(s, block));
         },
-        .table => {
-            renderTable(s, c, block, pal);
-        },
+        .table => renderTable(s, c, block, pal),
         .footnote => {
             const row = ui.div(c).row().wFull().gap(6);
             defer row.end();
             ui.icon(c, "text.quote", .{ .size = 10, .color = s.palette.faint });
             ui.text(c, block.text, .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true, .leading = 1.4 });
         },
-        .heading, .paragraph => {
-            ui.richText(c, block.text, block.spans, blockStyle(s, block));
-        },
+        .heading, .paragraph => anchoredText(s, c, block, blockStyle(s, block)),
+    }
+}
+
+/// A quotation: a rule down its left edge that deepens with its nesting,
+/// then the text, indented by how far in it was written.
+fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
+    const row = ui.div(c).row().wFull().gap(design.Spacing.sm).pl(@as(f32, @floatFromInt(block.indent)) * 14);
+    defer row.end();
+    _ = c.leaf(.{ .width = .{ .px = 2 }, .height = .fill, .background = s.palette.accent.alpha(0.6) }, .none, null);
+    anchoredText(s, c, block, blockStyle(s, block));
+}
+
+/// A block's text with its anchors live: a footnote reference jumps to its
+/// note, a link opens in the browser. The text is one leaf, so the anchors
+/// are found by measuring it — the same wrap the text system laid out —
+/// and an invisible box is placed over each range, as a link on a page.
+fn anchoredText(s: *AppState, c: *ui.Context, block: md.Block, style: ui.TextStyle) void {
+    const box = ui.div(c).column().grow().minW(0);
+    defer box.end();
+
+    // Its own leaf rather than `ui.richText`, which discards the index the
+    // anchors are measured from.
+    const idx = c.leaf(.{ .width = .fill }, .{ .text = .{
+        .str = block.text,
+        .style = style,
+        .color = style.color orelse s.palette.text,
+        .spans = block.spans,
+    } }, null);
+    if (block.anchors.len == 0) return;
+
+    const it = c.interact(idx, .{});
+    const r = it.rect orelse return;
+    // Wrap the text in the width it was given, so a range that crosses a
+    // line break becomes one box per line.
+    const lines = c.text.wrapAttributed(block.text, style, block.spans, r.w);
+    if (lines.len == 0) return;
+    const lh = c.text.lineHeight(style);
+
+    for (block.anchors) |a| {
+        const from = @min(a.start, block.text.len);
+        const to = @min(a.end, block.text.len);
+        for (lines, 0..) |line, i| {
+            // A line that holds none of this range is skipped: the wrap's
+            // lines do not overlap, and a range can span several.
+            if (to <= line.start or from >= line.end) continue;
+            const lo = @max(from, line.start);
+            const hi = @min(to, line.end);
+            const x0 = c.text.caretX(block.text[line.start..line.end], style, lo - line.start);
+            const x1 = c.text.caretX(block.text[line.start..line.end], style, hi - line.start);
+            if (x1 <= x0) continue;
+            const y = @as(f32, @floatFromInt(i)) * lh;
+            const hit = ui.div(c).absolute().offset(x0, y).w(x1 - x0).h(lh);
+            const target = hit.interaction();
+            if (target.clicked) switch (a.mark) {
+                .footnote => s.jumpToFootnote(a.number),
+                .link => s.openLink(a.target),
+            };
+            if (target.hovered) c.cursor_hand = true;
+            hit.end();
+        }
     }
 }
 
 fn renderTable(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
     _ = s;
+    if (block.table_header.len == 0) return;
+    const n = block.table_header.len;
+
     const box = ui.div(c).column().wFull().rounded(design.Radius.md)
         .bg(pal.code_bg).borderW(1).border(pal.code_border).clip();
     defer box.end();
 
-    // Header row.
+    // A column takes the room its widest cell asks for, and the whole is
+    // scaled into the table's own width when the cells would overflow it:
+    // two short cells stay compact, a long sentence gets the width it needs.
+    const widths = columnWidths(c, block, n);
+
     {
-        const head = ui.div(c).row().wFull().gap(design.Spacing.sm).px(design.Spacing.md).py(design.Spacing.sm).bg(pal.bg_tertiary);
+        const head = ui.div(c).row().wFull().px(design.Spacing.md).py(design.Spacing.sm).gap(design.Spacing.md);
+        head.c.node(head.index).style.background = pal.bg_tertiary;
         defer head.end();
-        for (block.table_header) |cell| {
-            ui.text(c, cell, .{ .size = design.FontSize.sm, .weight = .semibold, .color = pal.text_primary, .wrap = true });
+        for (block.table_header, 0..) |cell, i| {
+            tableCell(c, cell, widths[i], .{
+                .size = design.FontSize.sm,
+                .weight = .semibold,
+                .color = pal.text_primary,
+                .wrap = true,
+            }, alignOf(block, i));
         }
     }
 
-    // Body rows: each line of block.text is a row of pipe-separated cells.
-    var lines = std.mem.splitScalar(u8, block.text, '\n');
-    while (lines.next()) |row_line| {
-        if (row_line.len == 0) continue;
-        const row = ui.div(c).row().wFull().gap(design.Spacing.sm).px(design.Spacing.md).py(design.Spacing.sm).borderW(1).border(pal.code_border);
-        defer row.end();
-        var cells = std.mem.splitScalar(u8, row_line, '|');
-        while (cells.next()) |cell_raw| {
-            const cell = std.mem.trim(u8, cell_raw, " \t");
-            ui.text(c, cell, .{ .size = design.FontSize.sm, .color = pal.text_primary, .wrap = true });
+    for (block.table_rows) |row| {
+        const body = ui.div(c).row().wFull().px(design.Spacing.md).py(design.Spacing.sm).gap(design.Spacing.md).borderW(1).border(pal.code_border);
+        defer body.end();
+        for (0..n) |i| {
+            const cell = if (i < row.len) row[i] else "";
+            tableCell(c, cell, widths[i], .{
+                .size = design.FontSize.sm,
+                .color = pal.text_primary,
+                .wrap = true,
+            }, alignOf(block, i));
         }
     }
+}
+
+/// One column's width: what its widest cell asks for, scaled down with the
+/// rest when the row would overflow the window.
+fn columnWidths(c: *ui.Context, block: md.Block, n: usize) []f32 {
+    const a = c.alloc();
+    // The frame's own arena: both arrays go away with the frame.
+    const want = a.alloc(f32, n) catch return &.{};
+    @memset(want, 0);
+    const header_style: ui.TextStyle = .{ .size = design.FontSize.sm, .weight = .semibold };
+    const body_style: ui.TextStyle = .{ .size = design.FontSize.sm };
+    for (block.table_header, 0..) |cell, i| {
+        if (i < n) want[i] = c.text.layout(cell, header_style).width;
+    }
+    for (block.table_rows) |row| {
+        for (row, 0..) |cell, i| {
+            if (i >= n) break;
+            want[i] = @max(want[i], c.text.layout(cell, body_style).width);
+        }
+    }
+    // Every cell has the same padding and the row its own gaps.
+    const gaps: f32 = design.Spacing.md * @as(f32, @floatFromInt(n + 1));
+    var total: f32 = gaps;
+    for (want) |w| total += w;
+    const avail = @max(160, c.size.w - 88);
+    if (total > avail and total > 0) {
+        const scale = avail / total;
+        for (want) |*w| w.* *= scale;
+    }
+    return want;
+}
+
+/// A column's alignment: the `Align` of the style it is drawn with.
+const Align = @TypeOf(@as(ui.Style, .{}).align_items);
+
+/// One cell: a row of its column's width, its text placed by the separator's
+/// colons. The room the text leaves over becomes a leading gap, because a
+/// wrapped leaf fills its box — `align_items` cannot move glyphs that start
+/// at the leaf's own left edge.
+fn tableCell(c: *ui.Context, text: []const u8, width: f32, style: ui.TextStyle, side: Align) void {
+    const cell = ui.div(c).row().w(width).minW(width).maxW(width);
+    defer cell.end();
+    const content = c.text.layout(text, style).width;
+    const slack = @max(0, width - content);
+    const lead = switch (side) {
+        .start, .stretch => 0,
+        .center => slack / 2,
+        .end => slack,
+    };
+    if (lead > 0) {
+        const gap = ui.div(c).w(lead);
+        gap.end();
+    }
+    ui.text(c, text, style);
+}
+
+fn alignOf(block: md.Block, i: usize) Align {
+    if (i >= block.table_align.len) return .start;
+    return switch (block.table_align[i]) {
+        .left => .start,
+        .center => .center,
+        .right => .end,
+    };
 }
 
 fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {

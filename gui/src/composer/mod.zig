@@ -31,6 +31,15 @@ pub fn render(s: *AppState, c: *ui.Context) void {
         .rounded(18);
     defer box.end();
 
+    // The field's id, taken before it opens, so `TextBuffer.focus` (⌘L, a new
+    // chat) can hand it the keyboard: `ui.textArea` reads the focus it finds
+    // already set, and unlike `ui.textField` it never takes `want_focus`
+    // itself — a composer asked to focus would otherwise stay unfocused.
+    const field_id = c.peekId(null);
+    if (s.composer.want_focus) {
+        s.composer.want_focus = false;
+        c.focus = field_id;
+    }
     const typed = ui.textArea(c, &s.composer, .{
         .placeholder = if (s.selected == null) "Ask anything…" else "Message nullclaw…",
         .min_lines = 1,
@@ -49,15 +58,18 @@ pub fn render(s: *AppState, c: *ui.Context) void {
         renderCompletion(s, c);
     }
 
-    // Keyboard navigation for the completion menu.
+    // The completion menu takes the keys that move through it and the one
+    // that takes a candidate. The text area runs first, so Return has already
+    // asked to submit; taking a candidate cancels that, and the message is
+    // not sent with a half-typed file name in it.
+    var submitted = typed.submitted;
     if (s.completionActive()) {
         if (c.input.key) |k| switch (k) {
             .up => s.completionMove(-1),
             .down => s.completionMove(1),
             .enter, .tab => {
                 s.acceptCompletion();
-                // Prevent the textarea from also submitting on enter.
-                // (The textarea already ran; we consume the key here.)
+                submitted = false;
             },
             .escape => s.clearCompletion(),
             else => {},
@@ -70,7 +82,7 @@ pub fn render(s: *AppState, c: *ui.Context) void {
     model_chip.render(s, c);
     ui.spacer(c);
     hint(s, c);
-    sendOrStop(s, c, typed.submitted);
+    sendOrStop(s, c, submitted);
 }
 
 fn renderCompletion(s: *AppState, c: *ui.Context) void {

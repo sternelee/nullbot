@@ -82,6 +82,33 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02-chat-markdown");
 
+    // A table, a nested list and a footnote: the three things an answer can
+    // carry that a paragraph cannot show. The reference in the prose is a
+    // link to the note under the reply.
+    w.app.newChat();
+    w.app.pushMessage("user", "Which providers are configured, and what do they cost?");
+    w.app.pushMessage("assistant",
+        \\Each provider needs its own key[^keys]. These are set up now:
+        \\
+        \\| Provider | Model | Key |
+        \\| :--- | :--- | ---: |
+        \\| openrouter | claude-sonnet-4 | set |
+        \\| anthropic | claude-opus-4 | set |
+        \\| zhipu | glm-4.6 | none |
+        \\
+        \\What is left:
+        \\
+        \\- configure
+        \\  - the zhipu key
+        \\    - at https://open.bigmodel.cn
+        \\- [x] openrouter
+        \\- [ ] anthropic
+        \\
+        \\[^keys]: Stored in `~/.nullclaw/config.json` under `models.providers`.
+    );
+    w.tester.settle(0.5);
+    try shoot(&w, "02b-chat-table");
+
     // An answer mid-flight: the transcript, then the bubble being written,
     // with the composer offering to stop it.
     w.app.sending = true;

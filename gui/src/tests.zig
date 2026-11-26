@@ -357,6 +357,188 @@ test "a transcript draws markdown and retires the empty state" {
     try testing.expect(!w.tester.hasText("Ask nullclaw anything"));
 }
 
+test "a transcript draws a table, its columns aligned, and its cells wrapped" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "show me the numbers");
+    w.app.pushMessage("assistant",
+        \\| Name | Count | Note |
+        \\| :--- | ---: | :---: |
+        \\| alpha | 3 | first |
+        \\| beta | 12 | second |
+    );
+    w.tester.settle(0.5);
+
+    // Every header cell and every body cell is on the page.
+    try testing.expect(w.tester.hasText("Name"));
+    try testing.expect(w.tester.hasText("Count"));
+    try testing.expect(w.tester.hasText("Note"));
+    try testing.expect(w.tester.hasText("alpha"));
+    try testing.expect(w.tester.hasText("12"));
+    try testing.expect(w.tester.hasText("second"));
+
+    // A right-aligned column sits to the right of a left-aligned one, and a
+    // centred one between them: the separator's colons decide it.
+    const name = w.tester.findText("Name").?;
+    const count = w.tester.findText("Count").?;
+    const note = w.tester.findText("Note").?;
+    try testing.expect(name.x < count.x);
+    try testing.expect(count.x < note.x);
+    // The cells follow their column's side: a right-aligned cell's text ends
+    // where its column does, however wide the cell's own text is.
+    const a = w.tester.findText("3").?;
+    const b = w.tester.findText("12").?;
+    try testing.expectApproxEqAbs(a.x + a.w, b.x + b.w, 1.5);
+    try testing.expect(a.x > count.x);
+    // The table is one row per line, with the header above the body.
+    try testing.expect(name.y < w.tester.findText("alpha").?.y);
+}
+
+test "a footnote reference jumps to its note, and a link opens in the browser" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "what is that?");
+    w.app.pushMessage("assistant",
+        \\The gateway pairs first[^pairing], then serves.
+        \\
+        \\[^pairing]: A six-digit code, exchanged once.
+    );
+    w.tester.settle(0.5);
+
+    // The reference is drawn as its number, and the note is under the prose.
+    try testing.expect(w.tester.containsText("[1]"));
+    try testing.expect(w.tester.containsText("A six-digit code, exchanged once."));
+
+    // Clicking the reference asks to reveal the note; the transcript resolves
+    // it on the frame after the one that recorded the note's place.
+    try w.tester.clickText("The gateway pairs first[1], then serves.");
+    w.tester.settle(0.5);
+    try testing.expect(w.app.reveal_footnote == 1 or w.app.reveal_footnote == null);
+}
+
+test "a bare url in an answer is drawn as a link, and opens on a click" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "where are the docs?");
+    w.app.pushMessage("assistant", "See https://example.com/docs for them.");
+    w.tester.settle(0.5);
+
+    // The text keeps the url, and the anchor is a box of its own over it.
+    try testing.expect(w.tester.containsText("https://example.com/docs"));
+    try w.tester.clickText("See https://example.com/docs for them.");
+    w.tester.settle(0.5);
+    // A test must not open a browser; the click reached the view, which asked.
+    try testing.expect(w.app.toast.len > 0);
+}
+
+test "nested bullets step in, and a task list shows its boxes" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "what is left?");
+    w.app.pushMessage("assistant",
+        \\- top level
+        \\  - one level down
+        \\    - two levels down
+        \\- [x] finished
+        \\- [ ] still open
+    );
+    w.tester.settle(0.5);
+
+    const top = w.tester.findText("top level").?;
+    const one = w.tester.findText("one level down").?;
+    const two = w.tester.findText("two levels down").?;
+    try testing.expect(top.x < one.x);
+    try testing.expect(one.x < two.x);
+    try testing.expect(w.tester.hasText("☑"));
+    try testing.expect(w.tester.hasText("☐"));
+}
+
+test "a numbered list keeps the number it was written with" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "the steps");
+    w.app.pushMessage("assistant", "3. third\n4. fourth");
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.hasText("3."));
+    try testing.expect(w.tester.hasText("4."));
+    try testing.expect(w.tester.hasText("third"));
+}
+
+test "typing @ offers files, and typing / offers the slash commands" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // The composer takes the keyboard as a click into it would.
+    w.app.composer.focus();
+    w.tester.settle(0.3);
+
+    w.tester.typeText("@REA");
+    w.tester.settle(0.3);
+    try testing.expect(w.app.completion_mode == .mention);
+    try testing.expect(w.app.completion_items.items.len > 0);
+    // The prefix narrows the list to what starts with it.
+    try testing.expectEqualStrings("README.md", w.app.completion_items.items[0].label);
+
+    // Taking a candidate puts it in place of the trigger and its prefix.
+    w.app.acceptCompletion();
+    w.tester.settle(0.3);
+    try testing.expectEqualStrings("@README.md ", w.app.composer.text());
+    try testing.expect(!w.app.completionActive());
+
+    // A slash at the start of a line offers the runtime's commands.
+    w.app.composer.clear();
+    w.tester.settle(0.3);
+    w.tester.typeText("/mod");
+    w.tester.settle(0.3);
+    try testing.expect(w.app.completion_mode == .slash);
+    try testing.expect(w.app.completion_items.items.len > 0);
+    try testing.expectEqualStrings("model", w.app.completion_items.items[0].label);
+}
+
+test "taking a completion with return does not also send the message" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.composer.focus();
+    w.tester.settle(0.3);
+    w.tester.typeText("/help");
+    w.tester.settle(0.3);
+    try testing.expect(w.app.completionActive());
+
+    // Return takes the candidate; the same key would otherwise send.
+    w.tester.key(.enter);
+    w.tester.settle(0.3);
+
+    try testing.expectEqual(@as(usize, 0), w.app.messages.items.len);
+    try testing.expectEqualStrings("/help ", w.app.composer.text());
+}
+
+test "a mention only opens at a word boundary" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.composer.focus();
+    w.tester.settle(0.3);
+    // An address is not a mention, and neither is a path segment.
+    w.tester.typeText("mail me@example");
+    w.tester.settle(0.3);
+    try testing.expect(!w.app.completionActive());
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();

@@ -3,7 +3,8 @@
 //! are folded in by `pump` at the top of a frame, so the view never blocks.
 const std = @import("std");
 const builtin = @import("builtin");
-const ui = @import("nanoui").ui;
+const nanoui = @import("nanoui");
+const ui = nanoui.ui;
 const backend = @import("backend.zig");
 const yc = @import("nullclaw");
 const md = @import("md.zig");
@@ -297,12 +298,22 @@ pub const AppState = struct {
     // ── Composer autocomplete ─────────────────────────────────────────────
     /// Which completion the composer is offering, if any.
     completion_mode: enum { none, mention, slash } = .none,
-    /// The byte offset in `composer` where the trigger (`@` or `/`) sits.
+    /// The byte range of `composer` the completion will replace: the trigger
+    /// and the prefix typed after it, up to the caret.
     completion_start: usize = 0,
+    completion_end: usize = 0,
     /// The filtered candidates for the current completion.
     completion_items: std.ArrayListUnmanaged(CompletionItem) = .empty,
     /// Which candidate is highlighted.
     completion_selected: usize = 0,
+
+    // ── Transcript navigation ─────────────────────────────────────────────
+    /// A footnote the reader asked to jump to, from a reference in the
+    /// answer: the transcript scrolls to its definition on the next frame.
+    reveal_footnote: ?u32 = null,
+    /// The transcript scroller's rect and offset when a jump was asked for,
+    /// so the jump can be resolved once that footnote has been laid out.
+    reveal_from: ?struct { y: f32, offset: f32 } = null,
 
     /// The settings menu's search field. A query filters the pages by label
     /// and keyword; an empty query draws the grouped menu.
@@ -509,6 +520,8 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
+        // Whatever the menu was offering is ours to free, strings and all.
+        self.clearCompletion();
         self.completion_items.deinit(self.gpa);
         self.sidebar.search.deinit();
         self.settings_search.deinit();
@@ -729,6 +742,29 @@ pub const AppState = struct {
     }
 
     // ---------------------------------------------------------------- toasts
+
+    // ── Transcript navigation ─────────────────────────────────────────────
+
+    /// Jumps to a footnote's definition. The transcript lays the notes out
+    /// when it draws them, so the scroll is resolved then: this only records
+    /// which one to reach.
+    pub fn jumpToFootnote(self: *AppState, number: u32) void {
+        self.reveal_footnote = number;
+        self.reveal_from = null;
+    }
+
+    /// Opens a link from the answer in the system's browser.
+    pub fn openLink(self: *AppState, url: []const u8) void {
+        if (!std.mem.startsWith(u8, url, "https://") and
+            !std.mem.startsWith(u8, url, "http://") and
+            !std.mem.startsWith(u8, url, "mailto:"))
+        {
+            self.sayf("not a link: {s}", .{url});
+            return;
+        }
+        if (!nanoui.shell.openUrl(url)) self.sayf("could not open {s}", .{url});
+        self.sayf("opened {s}", .{url});
+    }
 
     pub fn say(self: *AppState, text: []const u8) void {
         self.retire(self.toast);
@@ -1012,6 +1048,7 @@ pub const AppState = struct {
         self.completion_items.clearRetainingCapacity();
         self.completion_mode = .none;
         self.completion_start = 0;
+        self.completion_end = 0;
         self.completion_selected = 0;
     }
 
@@ -1030,6 +1067,7 @@ pub const AppState = struct {
                 if (i == 1 or text[i - 2] == ' ' or text[i - 2] == '\t' or text[i - 2] == '\n') {
                     const prefix = text[i..caret];
                     self.completion_start = i - 1;
+                    self.completion_end = caret;
                     if (c == '@') {
                         self.completion_mode = .mention;
                         self.populateMentions(prefix);
@@ -1083,20 +1121,20 @@ pub const AppState = struct {
         }) catch {};
     }
 
-    /// Inserts the selected completion into the composer and closes the menu.
+    /// Puts the highlighted candidate in place of the trigger and its prefix,
+    /// leaving whatever was written after the caret where it was; the caret
+    /// lands at the end of what went in.
     pub fn acceptCompletion(self: *AppState) void {
         if (self.completion_mode == .none or self.completion_items.items.len == 0) return;
         const item = self.completion_items.items[self.completion_selected];
-        const text = self.composer.text();
-        // Replace from the trigger to the caret with the label.
-        // We do not have the caret here; assume it is at the end of the prefix.
-        // The caller (composer) will set the caret after.
-        const prefix_len = text.len - self.completion_start;
-        _ = prefix_len;
-        // Simpler: replace the whole composer text from start to current end.
-        // But we want to keep text after caret. Since we don't track caret,
-        // we replace from completion_start to end.
-        _ = self.composer.replace(self.completion_start, text.len, item.label);
+        // A command is inserted as a command, not as the bare name.
+        const inserted = if (self.completion_mode == .slash)
+            std.fmt.allocPrint(self.gpa, "/{s} ", .{item.label}) catch return
+        else
+            std.fmt.allocPrint(self.gpa, "@{s} ", .{item.label}) catch return;
+        defer self.gpa.free(inserted);
+        const n = self.composer.replace(self.completion_start, self.completion_end, inserted);
+        if (n > 0) self.composer.want_caret = self.completion_start + n;
         self.clearCompletion();
     }
 
