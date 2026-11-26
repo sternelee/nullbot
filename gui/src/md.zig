@@ -83,8 +83,22 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
         }
 
         if (bulletRest(trimmed)) |rest| {
-            const inlined = try emphasize(a, rest);
-            try blocks.append(a, .{ .kind = .bullet, .text = inlined.text, .spans = inlined.spans });
+            var text = rest;
+            var prefix: []const u8 = "";
+            if (std.mem.startsWith(u8, rest, "[ ] ") or std.mem.startsWith(u8, rest, "[ ]\t")) {
+                prefix = "☐ ";
+                text = rest[4..];
+            } else if (std.mem.startsWith(u8, rest, "[x] ") or std.mem.startsWith(u8, rest, "[X] ") or std.mem.startsWith(u8, rest, "[x]\t") or std.mem.startsWith(u8, rest, "[X]\t")) {
+                prefix = "☑ ";
+                text = rest[4..];
+            }
+            const inlined = try emphasize(a, text);
+            if (prefix.len > 0) {
+                const full = try std.fmt.allocPrint(a, "{s}{s}", .{ prefix, inlined.text });
+                try blocks.append(a, .{ .kind = .bullet, .text = full, .spans = inlined.spans });
+            } else {
+                try blocks.append(a, .{ .kind = .bullet, .text = inlined.text, .spans = inlined.spans });
+            }
             continue;
         }
 
@@ -149,6 +163,33 @@ fn emphasize(a: std.mem.Allocator, src: []const u8) !Inline {
                 continue;
             }
         }
+        // Strikethrough ~~text~~
+        if (c == '~' and i + 1 < src.len and src[i + 1] == '~') {
+            try b.flush();
+            b.strike = !b.strike;
+            i += 2;
+            continue;
+        }
+        // Link [text](url): keep the label, drop the url.
+        if (c == '[') {
+            if (std.mem.indexOfScalarPos(u8, src, i + 1, ']')) |close_bracket| {
+                if (close_bracket + 1 < src.len and src[close_bracket + 1] == '(') {
+                    if (std.mem.indexOfScalarPos(u8, src, close_bracket + 2, ')')) |close_paren| {
+                        const label = src[i + 1 .. close_bracket];
+                        const inlined = try emphasize(a, label);
+                        try b.out.appendSlice(a, inlined.text);
+                        // record spans offset
+                        for (inlined.spans) |sp| {
+                            try b.spans.append(a, .{ .start = sp.start + @as(u32, @intCast(b.out.items.len - inlined.text.len)), .end = sp.end + @as(u32, @intCast(b.out.items.len - inlined.text.len)), .weight = sp.weight, .italic = sp.italic, .mono = sp.mono });
+                        }
+                        try b.spans.append(a, .{ .start = @intCast(b.out.items.len - inlined.text.len), .end = @intCast(b.out.items.len), .underline = true });
+                        b.start = @intCast(b.out.items.len);
+                        i = close_paren + 1;
+                        continue;
+                    }
+                }
+            }
+        }
         if (c == '*' and i + 1 < src.len and src[i + 1] == '*') {
             try b.flush();
             b.bold = !b.bold;
@@ -191,17 +232,19 @@ const Builder = struct {
     start: u32 = 0,
     bold: bool = false,
     italic: bool = false,
+    strike: bool = false,
 
     /// Emits the run just closed. A run with no emphasis carries no span:
     /// the text style already paints it.
     fn flush(b: *Builder) !void {
         if (b.out.items.len <= b.start) return;
-        if (b.bold or b.italic) {
+        if (b.bold or b.italic or b.strike) {
             try b.spans.append(b.a, .{
                 .start = b.start,
                 .end = @intCast(b.out.items.len),
                 .weight = if (b.bold) .bold else null,
                 .italic = b.italic,
+                .strike = b.strike,
             });
         }
         b.start = @intCast(b.out.items.len);
@@ -218,6 +261,7 @@ const Builder = struct {
             .mono = true,
             .weight = if (b.bold) .bold else null,
             .italic = b.italic,
+            .strike = b.strike,
         });
         b.start = @intCast(b.out.items.len);
     }
