@@ -137,10 +137,31 @@ test "screenshots" {
         \\
         \\###### Notes
         \\
-        \\Each step is one read:
+        \\Each step is one read, and the whole list is longer than the block
+        \\shows:
         \\
         \\```zig
-        \\try bootstrap.load(workspace);
+        \\const std = @import("std");
+        \\const bootstrap = @import("bootstrap/root.zig");
+        \\
+        \\/// What the runtime reads before the first turn.
+        \\pub const Startup = struct {
+        \\    workspace: std.fs.Dir,
+        \\    identity: ?Identity = null,
+        \\    skills: []const Skill = &.{},
+        \\
+        \\    pub fn load(dir: std.fs.Dir) !Startup {
+        \\        var self: Startup = .{ .workspace = dir };
+        \\        self.identity = try Identity.read(dir);
+        \\        self.skills = try Skill.scan(dir);
+        \\        return self;
+        \\    }
+        \\
+        \\    pub fn deinit(self: *Startup) void {
+        \\        if (self.identity) |*id| id.deinit();
+        \\        for (self.skills) |*s| s.deinit();
+        \\    }
+        \\};
         \\```
     );
     w.tester.settle(0.5);

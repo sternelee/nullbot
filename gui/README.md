@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 157 tests, headless
+zig build test       # 160 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -71,7 +71,7 @@ the app runs:
 | `02b-chat-table.png` | A table with per-column alignment, a nested checklist and a footnote |
 | `02c-chat-wide-table.png` | A table too wide for the column: it scrolls sideways, and a note carries the way back |
 | `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
-| `02e-chat-headings.png` | Six heading ranks, and a code block with its language and Copy button |
+| `02e-chat-headings.png` | Six heading ranks, and a long code block folded behind its count |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -125,7 +125,9 @@ outgrow the column, `<br>` hard breaks, quotations that nest one edge deeper
 per level, thematic breaks with room around them, code highlighted by the
 language its fence names (comments, strings, numbers, keywords, types,
 constants and calls, in colours mixed from the palette so every theme
-highlights in its own terms), footnotes (`[^label]`, numbered by where they
+highlights in its own terms) and folded after fourteen lines behind a
+control that counts what is hidden, so one file's worth of code does not
+bury the message under it, footnotes (`[^label]`, numbered by where they
 are first cited, with a reference that scrolls to its note and a way back to
 the sentence itself), strikethrough, inline mathematics (`$x^2$`, set in
 italics with the few TeX shapes a chat uses folded into Unicode: `x^2`

@@ -235,6 +235,11 @@ pub const CapsSummary = struct {
 /// A picture from an answer, read from disk once. `bytes` is empty when the
 /// file could not be read, so the view draws why rather than trying again on
 /// every frame.
+/// The number of lines a code block shows before it is folded away. Long
+/// enough to read the start of a function, short enough that a reply with a
+/// file's worth of code still lets the next message be reached.
+pub const code_fold_lines: usize = 14;
+
 pub const ImageEntry = struct {
     bytes: []u8 = &.{},
     /// Why it could not be read, owned by the map's key allocator.
@@ -332,6 +337,11 @@ pub const AppState = struct {
     /// A picture an answer pointed at, loaded once and kept: decoding is the
     /// expensive part, and a transcript redraws every frame.
     images: std.StringHashMapUnmanaged(ImageEntry) = .empty,
+
+    /// Which long code blocks the reader has opened. Keyed by the block's own
+    /// text and language, so the state survives every frame the transcript is
+    /// rebuilt for — and toggling one block does not fold another.
+    code_expanded: std.AutoHashMapUnmanaged(u64, bool) = .empty,
 
     /// The settings menu's search field. A query filters the pages by label
     /// and keyword; an empty query draws the grouped menu.
@@ -545,6 +555,7 @@ pub const AppState = struct {
             if (e.value_ptr.failure) |why| self.gpa.free(why);
         }
         self.images.deinit(self.gpa);
+        self.code_expanded.deinit(self.gpa);
         // Whatever the menu was offering is ours to free, strings and all.
         self.clearCompletion();
         self.completion_items.deinit(self.gpa);
@@ -786,6 +797,29 @@ pub const AppState = struct {
         self.reveal_reference = number;
         self.reveal_reference_y = null;
         self.reveal_footnote = null;
+    }
+
+    /// A code block's identity: its language and its text. Two identical
+    /// blocks share a key, which is what a reader would expect — folding one
+    /// copy of a snippet folds the other.
+    pub fn codeKey(text: []const u8, lang: []const u8) u64 {
+        var h = std.hash.Wyhash.init(0);
+        h.update(lang);
+        h.update("\x00");
+        h.update(text);
+        return h.final();
+    }
+
+    /// Whether a long block is open. A block the reader has never touched is
+    /// closed when it is longer than `code_fold_lines`.
+    pub fn codeOpen(self: *AppState, key: u64, lines: usize) bool {
+        if (self.code_expanded.get(key)) |open| return open;
+        return lines <= code_fold_lines;
+    }
+
+    pub fn toggleCode(self: *AppState, key: u64, lines: usize) void {
+        const open = self.codeOpen(key, lines);
+        self.code_expanded.put(self.gpa, key, !open) catch {};
     }
 
     /// A picture an answer pointed at, loaded on first use and then kept.

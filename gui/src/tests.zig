@@ -827,6 +827,117 @@ test "each heading level is drawn smaller than the one above it" {
     try testing.expect(w.tester.findText("One").?.h > w.tester.findText("Six").?.h * 1.4);
 }
 
+test "a long code block folds, and opens when the control is pressed" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // Thirty lines: longer than a block may show before it folds.
+    const long =
+        \\```zig
+        \\const a0 = 0;
+        \\const a1 = 1;
+        \\const a2 = 2;
+        \\const a3 = 3;
+        \\const a4 = 4;
+        \\const a5 = 5;
+        \\const a6 = 6;
+        \\const a7 = 7;
+        \\const a8 = 8;
+        \\const a9 = 9;
+        \\const b0 = 0;
+        \\const b1 = 1;
+        \\const b2 = 2;
+        \\const b3 = 3;
+        \\const b4 = 4;
+        \\const b5 = 5;
+        \\const b6 = 6;
+        \\const b7 = 7;
+        \\const b8 = 8;
+        \\const b9 = 9;
+        \\const c0 = 0;
+        \\const c1 = 1;
+        \\const c2 = 2;
+        \\const c3 = 3;
+        \\const LAST = 42;
+        \\```
+    ;
+    w.app.pushMessage("user", "show the file");
+    w.app.pushMessage("assistant", long);
+    w.tester.settle(0.5);
+
+    // Folded: the start is there, the end is not, and the control says what
+    // is hidden behind it.
+    try testing.expect(w.tester.containsText("const a0 = 0;"));
+    try testing.expect(!w.tester.containsText("LAST = 42"));
+    try testing.expect(w.tester.hasText("Show all 25 lines"));
+
+    // Pressed, the whole block is drawn and the control offers to fold it.
+    try w.tester.clickText("Show all 25 lines");
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.containsText("LAST = 42"));
+    try testing.expect(w.tester.hasText("Show fewer (11 more lines)"));
+
+    // And back.
+    try w.tester.clickText("Show fewer (11 more lines)");
+    w.tester.settle(0.5);
+    try testing.expect(!w.tester.containsText("LAST = 42"));
+    try testing.expect(w.tester.hasText("Show all 25 lines"));
+}
+
+test "a short code block has no fold control" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "a snippet");
+    w.app.pushMessage("assistant", "```zig\nconst x = 1;\n```");
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.containsText("const x = 1;"));
+    try testing.expect(!w.tester.containsText("Show all"));
+    try testing.expect(!w.tester.containsText("Show fewer"));
+}
+
+test "folding one block leaves another alone" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    var text: std.ArrayList(u8) = .empty;
+    defer text.deinit(testing.allocator);
+    try text.appendSlice(testing.allocator, "first:\n\n```zig\n");
+    for (0..20) |i| {
+        const line = try std.fmt.allocPrint(testing.allocator, "const one{d} = {d};\n", .{ i, i });
+        defer testing.allocator.free(line);
+        try text.appendSlice(testing.allocator, line);
+    }
+    try text.appendSlice(testing.allocator, "```\n\nsecond:\n\n```zig\n");
+    for (0..20) |i| {
+        const line = try std.fmt.allocPrint(testing.allocator, "const two{d} = {d};\n", .{ i, i });
+        defer testing.allocator.free(line);
+        try text.appendSlice(testing.allocator, line);
+    }
+    try text.appendSlice(testing.allocator, "```");
+
+    w.app.pushMessage("user", "both");
+    w.app.pushMessage("assistant", text.items);
+    w.tester.settle(0.5);
+
+    // Two blocks, two controls, each naming the same count.
+    try testing.expect(w.tester.hasText("Show all 20 lines"));
+
+    // Opening the first leaves the second folded: the key is the block's own
+    // text, not its place in the reply.
+    try testing.expectEqual(@as(u32, 0), w.app.code_expanded.count());
+    try w.tester.clickText("Show all 20 lines");
+    w.tester.settle(0.5);
+    try testing.expectEqual(@as(u32, 1), w.app.code_expanded.count());
+    // One block opened, so one control still offers to open.
+    try testing.expect(w.tester.hasText("Show all 20 lines"));
+    try testing.expect(w.tester.hasText("Show fewer (6 more lines)"));
+}
+
 test "a toast appears and goes away" {
     var w: Window = undefined;
     try w.init();
