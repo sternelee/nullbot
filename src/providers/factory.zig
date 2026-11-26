@@ -815,7 +815,9 @@ test "findCompatProvider returns correct flags" {
     for (native_tool_aliases) |provider_name| {
         const provider = findCompatProvider(provider_name).?;
         try std.testing.expect(provider.native_tools);
-        try std.testing.expect(provider.disable_streaming);
+        // GLM/Z.AI stream: the gateway serves SSE, and a chat that waits for
+        // the whole answer reads as frozen. They used to be opted out here.
+        try std.testing.expect(!provider.disable_streaming);
         try std.testing.expect(provider.thinking_param);
     }
 
@@ -894,7 +896,7 @@ test "fromConfig keeps native_tools enabled for z.ai/glm aliases" {
     }
 }
 
-test "fromConfig disables streaming for z.ai/glm aliases" {
+test "fromConfig streams for z.ai/glm aliases" {
     const alloc = std.testing.allocator;
     const native_tool_aliases = [_][]const u8{
         "glm",
@@ -916,8 +918,8 @@ test "fromConfig disables streaming for z.ai/glm aliases" {
         var holder = ProviderHolder.fromConfig(alloc, provider_name, "key", null, true, null, null, false, null);
         defer holder.deinit();
         try std.testing.expect(holder == .compatible);
-        try std.testing.expect(holder.compatible.disable_streaming);
-        try std.testing.expect(!holder.provider().supportsStreaming());
+        try std.testing.expect(!holder.compatible.disable_streaming);
+        try std.testing.expect(holder.provider().supportsStreaming());
     }
 }
 
