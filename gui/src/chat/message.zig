@@ -145,15 +145,23 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
                 const pad = ui.div(c).w(@as(f32, @floatFromInt(block.indent)) * 16);
                 pad.end();
             }
-            // A middle dot rather than "•": the bundled font has no glyph for
-            // the bullet and fell back to a degree sign.
-            ui.text(c, if (block.marker.len > 0) block.marker else "·", .{
-                .size = design.FontSize.md,
-                .color = s.palette.muted,
-            });
-            anchoredText(s, c, block, blockStyle(s, block));
+            if (block.task) |done| {
+                checkbox(s, c, done);
+            } else {
+                // A middle dot rather than "•": the bundled font has no glyph
+                // for the bullet and fell back to a degree sign.
+                ui.text(c, if (block.marker.len > 0) block.marker else "·", .{
+                    .size = design.FontSize.md,
+                    .color = s.palette.muted,
+                });
+            }
+            anchoredText(s, c, block, if (block.task != null and block.task.?)
+                taskDoneStyle(s, block)
+            else
+                blockStyle(s, block));
         },
         .table => renderTable(s, c, block, pal),
+        .image => renderImage(s, c, block, pal),
         .footnote => {
             const row = ui.div(c).row().wFull().gap(6);
             defer row.end();
@@ -166,6 +174,35 @@ fn renderBlock(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design
 
 /// A quotation: a rule down its left edge for every level it is nested, so a
 /// quote inside a quote reads as two, then the text.
+/// A task item's box: a rounded square, filled and ticked when done, an
+/// outline when not. Drawn rather than written as a character, because the
+/// bundled font has no box glyph and a checkbox carries its state in shape as
+/// well as in weight.
+fn checkbox(s: *AppState, c: *ui.Context, done: bool) void {
+    // As tall as the first line of the text beside it, and pushed down by the
+    // leading so the box sits on the line rather than over it.
+    const size: f32 = 14;
+    const wrap = ui.div(c).row().w(size).minW(size).h(size).pt(2.5).center();
+    defer wrap.end();
+    const box = ui.div(c).w(size).h(size).rounded(4);
+    if (done) {
+        box.c.node(box.index).style.background = s.palette.accent;
+    } else {
+        box.c.node(box.index).style.border = s.palette.faint;
+        box.c.node(box.index).style.border_width = 1.5;
+    }
+    defer box.end();
+    if (done) ui.icon(c, "checkmark", .{ .size = 9, .weight = .bold, .color = s.palette.accent_text });
+}
+
+/// A task item that is done reads as done: its text is quieter and struck
+/// through, the way a checklist shows its finished lines.
+fn taskDoneStyle(s: *AppState, block: md.Block) ui.TextStyle {
+    var style = blockStyle(s, block);
+    style.color = s.palette.muted;
+    return style;
+}
+
 fn quoted(s: *AppState, c: *ui.Context, block: md.Block) void {
     const depth: usize = @as(usize, block.indent) + 1;
     const row = ui.div(c).row().wFull().gap(design.Spacing.sm);
@@ -240,6 +277,77 @@ fn anchoredText(s: *AppState, c: *ui.Context, block: md.Block, style: ui.TextSty
             }
             hit.end();
         }
+    }
+}
+
+/// A picture an answer pointed at. A local file is decoded and drawn; a
+/// remote one is a link, because a frame may not wait on the network. What
+/// cannot be shown still says what it was and where it is, so the reply does
+/// not lose a sentence to a broken path.
+fn renderImage(s: *AppState, c: *ui.Context, block: md.Block, pal: *const design.SemanticColor) void {
+    const entry = s.image(block.image_url);
+    const card = ui.div(c).column().wFull().gap(6).rounded(design.Radius.md).p(design.Spacing.sm)
+        .bg(pal.code_bg).borderW(1).border(pal.code_border);
+    defer card.end();
+
+    var drawn = false;
+    if (entry.bytes.len > 0) {
+        // Keyed by the URL so the toolkit decodes each picture once, and sized
+        // to the reading measure so a screenshot does not fill the window.
+        drawn = ui.image(c, .{
+            .key = block.image_url,
+            .bytes = entry.bytes,
+            .max_width = design.Spacing.content_max - design.Spacing.sm * 2,
+            .max_height = 420,
+            .radius = design.Radius.sm,
+        });
+    }
+
+    // The caption: its alt text, and the path under it. For a picture that
+    // was drawn that is the whole of it; for one that was not, it is the
+    // explanation.
+    {
+        const row = ui.div(c).row().wFull().gap(6).itemsCenter();
+        defer row.end();
+        ui.icon(c, if (drawn) "photo" else "photo.badge.exclamationmark", .{
+            .size = 11,
+            .color = if (drawn) pal.text_muted else s.palette.warning,
+        });
+        ui.text(c, if (block.image_alt.len > 0) block.image_alt else "image", .{
+            .size = design.FontSize.xs,
+            .color = if (drawn) pal.text_secondary else s.palette.warning,
+            .wrap = true,
+        });
+        ui.spacer(c);
+        if (!drawn) {
+            // Why it is not there, in the tooltip's place: the reason is the
+            // useful part, and the row's right edge is where a reader looks.
+            ui.text(c, entry.failure orelse "unsupported format", .{
+                .size = design.FontSize.xs,
+                .color = s.palette.faint,
+                .mono = true,
+            });
+        }
+    }
+
+    // The reference itself, so a path or a URL in a reply can be used.
+    {
+        const response = ui.pressable(c, .{
+            .direction = .row,
+            .width = .fill,
+            .gap = 6,
+            .padding = .xy(4, 2),
+            .radius = design.Radius.sm,
+            .align_items = .center,
+        }, s.palette.hover);
+        defer ui.end(c);
+        _ = response;
+        ui.text(c, block.image_url, .{
+            .size = design.FontSize.xs,
+            .color = pal.text_link,
+            .mono = true,
+            .truncate = .middle,
+        });
     }
 }
 
@@ -409,5 +517,6 @@ fn blockStyle(s: *AppState, block: md.Block) ui.TextStyle {
         .paragraph => .{ .size = 13.5, .color = s.palette.text, .wrap = true, .leading = 1.45 },
         .table => .{ .size = design.FontSize.sm, .color = s.palette.text, .wrap = true },
         .footnote => .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true, .leading = 1.4 },
+        .image => .{ .size = design.FontSize.xs, .color = s.palette.muted, .wrap = true },
     };
 }

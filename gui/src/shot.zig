@@ -139,6 +139,30 @@ test "screenshots" {
     w.tester.settle(0.5);
     try shoot(&w, "02c-chat-wide-table");
 
+    // An inline formula, a checklist, and a picture: the three things an
+    // answer carries that prose alone cannot.
+    // A picture the answer points at: the shot of the empty window, so the
+    // picture in the shot is one a reader can recognise as decoded rather
+    // than a placeholder.
+    w.app.newChat();
+    w.app.pushMessage("user", "Explain the pairing rule, and what is left to do.");
+    w.app.pushMessage("assistant",
+        \\What is left:
+        \\
+        \\- [x] generate the key pair
+        \\- [x] show the code once, at startup
+        \\- [ ] exchange it for a token
+        \\  - [ ] store the token in the secret store
+        \\- [ ] refuse a second exchange
+        \\
+        \\![the window this was taken in](/tmp/nullclaw-gui-shots/01-chat-empty.png)
+        \\
+        \\The wait between attempts grows as $t_n = \\min(2^n \\times 250, 8000)$ ms,
+        \\so the tenth try waits $2^5 \\times 250 = 8000$ ms and no longer.
+    );
+    w.tester.settle(0.5);
+    try shoot(&w, "02d-chat-math-task-image");
+
     // An answer mid-flight: the transcript, then the bubble being written,
     // with the composer offering to stop it.
     w.app.sending = true;

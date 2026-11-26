@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 142 tests, headless
+zig build test       # 154 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -70,6 +70,7 @@ the app runs:
 | `02-chat-markdown.png` | A reply, with headings, code, lists and quotes |
 | `02b-chat-table.png` | A table with per-column alignment, a nested checklist and a footnote |
 | `02c-chat-wide-table.png` | A table too wide for the column: it scrolls sideways, and a note carries the way back |
+| `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
 | `03-config.png` | The configuration page (the sidebar shows the settings menu, grouped Workspace / Runtime / System): runtime card, then Provider, Workspace, MCP servers, Cron, Skills and Capabilities |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
@@ -124,7 +125,12 @@ language its fence names (comments, strings, numbers, keywords, types,
 constants and calls, in colours mixed from the palette so every theme
 highlights in its own terms), footnotes (`[^label]`, numbered by where they
 are first cited, with a reference that scrolls to its note and a way back to
-the sentence itself), strikethrough, images (as their alt text), and links —
+the sentence itself), strikethrough, inline mathematics (`$x^2$`, set in
+italics with the few TeX shapes a chat uses folded into Unicode: `x^2`
+becomes `x²`, `\alpha` becomes `α`), checklists that draw a real box per item
+and fill it when the item is done, pictures (`![alt](path)` on a line of its
+own, decoded from disk and drawn under its caption; a remote picture stays a
+link, because a frame may not wait on the network), and links —
 `[label](url)`, `<url>`, and the bare URLs, `www.` hosts and email addresses
 GFM links on its own. A link opens in the browser; a footnote reference jumps
 to the note under the reply.

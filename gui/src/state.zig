@@ -232,6 +232,15 @@ pub const CapsSummary = struct {
     tools: usize,
 };
 
+/// A picture from an answer, read from disk once. `bytes` is empty when the
+/// file could not be read, so the view draws why rather than trying again on
+/// every frame.
+pub const ImageEntry = struct {
+    bytes: []u8 = &.{},
+    /// Why it could not be read, owned by the map's key allocator.
+    failure: ?[]const u8 = null,
+};
+
 pub const CompletionItem = struct {
     /// What is inserted into the composer.
     label: []const u8,
@@ -319,6 +328,10 @@ pub const AppState = struct {
     /// it into a scroll offset, because only the transcript knows its own
     /// box and how far down it already is.
     reveal_reference_y: ?f32 = null,
+
+    /// A picture an answer pointed at, loaded once and kept: decoding is the
+    /// expensive part, and a transcript redraws every frame.
+    images: std.StringHashMapUnmanaged(ImageEntry) = .empty,
 
     /// The settings menu's search field. A query filters the pages by label
     /// and keyword; an empty query draws the grouped menu.
@@ -525,6 +538,13 @@ pub const AppState = struct {
         self.messages.deinit(self.gpa);
         self.docs.deinit(self.gpa);
         self.composer.deinit();
+        var image_it = self.images.iterator();
+        while (image_it.next()) |e| {
+            self.gpa.free(e.key_ptr.*);
+            self.gpa.free(e.value_ptr.bytes);
+            if (e.value_ptr.failure) |why| self.gpa.free(why);
+        }
+        self.images.deinit(self.gpa);
         // Whatever the menu was offering is ours to free, strings and all.
         self.clearCompletion();
         self.completion_items.deinit(self.gpa);
@@ -768,6 +788,59 @@ pub const AppState = struct {
         self.reveal_footnote = null;
     }
 
+    /// A picture an answer pointed at, loaded on first use and then kept.
+    ///
+    /// Only what is on this machine is drawn: a path, absolute or relative to
+    /// the workspace. A remote picture would have to be fetched, and a frame
+    /// may not wait on the network, so a URL is answered as a link instead.
+    pub fn image(self: *AppState, url: []const u8) ImageEntry {
+        if (self.images.get(url)) |entry| return entry;
+        var entry: ImageEntry = .{};
+        if (self.readImage(url)) |bytes| {
+            entry.bytes = bytes;
+        } else |err| {
+            entry.failure = self.gpa.dupe(u8, @errorName(err)) catch "unreadable";
+        }
+        // The key is the caller's text, so it is copied; the entry outlives
+        // the frame that asked for it.
+        const key = self.gpa.dupe(u8, url) catch return entry;
+        self.images.put(self.gpa, key, entry) catch {
+            self.gpa.free(key);
+            self.gpa.free(entry.bytes);
+            if (entry.failure) |why| self.gpa.free(why);
+        };
+        return entry;
+    }
+
+    fn readImage(self: *AppState, url: []const u8) ![]u8 {
+        // A `file://` URL is a path with a scheme on it.
+        const path = if (std.mem.startsWith(u8, url, "file://")) url["file://".len..] else url;
+        if (std.mem.indexOf(u8, path, "://") != null) return error.RemoteImageNotFetched;
+        if (path.len == 0) return error.EmptyPath;
+        const resolved = if (std.fs.path.isAbsolute(path))
+            path
+        else blk: {
+            // Relative paths are the workspace's: that is where an agent's
+            // files and screenshots live.
+            const ws = self.workspaceDir();
+            break :blk std.fs.path.join(self.gpa, &.{ ws, path }) catch return error.OutOfMemory;
+        };
+        defer if (!std.fs.path.isAbsolute(path)) self.gpa.free(resolved);
+        return std.Io.Dir.cwd().readFileAlloc(self.io, resolved, self.gpa, .limited(16 << 20));
+    }
+
+    /// The workspace the runtime reads and writes: the one the config page
+    /// holds, the loaded runtime's, or the one `~/.nullclaw` scaffolds.
+    fn workspaceDir(self: *AppState) []const u8 {
+        const typed = std.mem.trim(u8, self.cfg_workspace.text(), " \t\r\n");
+        if (typed.len > 0) return typed;
+        if (self.linked) |rt| {
+            const ws = rt.config.workspace_dir;
+            if (ws.len > 0) return ws;
+        }
+        return self.paths.workspace;
+    }
+
     /// Opens a link from the answer in the system's browser.
     pub fn openLink(self: *AppState, url: []const u8) void {
         if (!std.mem.startsWith(u8, url, "https://") and
@@ -777,7 +850,17 @@ pub const AppState = struct {
             self.sayf("not a link: {s}", .{url});
             return;
         }
-        if (!nanoui.shell.openUrl(url)) self.sayf("could not open {s}", .{url});
+        // A headless test clicking a link must not open a page in the
+        // machine's browser: that is a side effect on the person running the
+        // suite, and `zig build test` has to stay hermetic.
+        if (builtin.is_test) {
+            self.sayf("opened {s}", .{url});
+            return;
+        }
+        if (!nanoui.shell.openUrl(url)) {
+            self.sayf("could not open {s}", .{url});
+            return;
+        }
         self.sayf("opened {s}", .{url});
     }
 

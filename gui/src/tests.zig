@@ -8,6 +8,10 @@ const view = @import("view.zig");
 const harness = @import("harness.zig");
 const Window = harness.Window;
 
+/// A one-pixel PNG: the smallest thing that proves a file was decoded rather
+/// than passed over.
+const dot_png_b64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 test {
     _ = @import("backend.zig");
     _ = @import("md.zig");
@@ -457,8 +461,12 @@ test "nested bullets step in, and a task list shows its boxes" {
     const two = w.tester.findText("two levels down").?;
     try testing.expect(top.x < one.x);
     try testing.expect(one.x < two.x);
-    try testing.expect(w.tester.hasText("☑"));
-    try testing.expect(w.tester.hasText("☐"));
+    // A task item draws a box of its own rather than a character: the glyphs
+    // are not in the bundled font, and a box carries its state in shape.
+    try testing.expect(!w.tester.hasText("☑"));
+    try testing.expect(!w.tester.hasText("☐"));
+    try testing.expect(w.tester.findText("finished").?.x > w.tester.findText("top level").?.x);
+    try testing.expect(w.tester.hasText("still open"));
 }
 
 test "a numbered list keeps the number it was written with" {
@@ -673,6 +681,75 @@ test "a rule written with spaces between its marks is still a rule" {
     defer doc.deinit();
     try testing.expectEqual(@as(usize, 3), doc.blocks.len);
     try testing.expectEqual(@import("md.zig").Kind.rule, doc.blocks[1].kind);
+}
+
+test "a task list draws a box per item, ticked only when done" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "where are we?");
+    w.app.pushMessage("assistant", "- [x] generated the key\n- [ ] paired the channel");
+    w.tester.settle(0.5);
+
+    // Both items are there, and both sit right of the box the view draws.
+    const done = w.tester.findText("generated the key").?;
+    const open = w.tester.findText("paired the channel").?;
+    try testing.expect(open.y > done.y);
+    // The two boxes line up with each other, whatever the text says.
+    try testing.expect((done.x - open.x) < 0.5 and (open.x - done.x) < 0.5);
+    // The old character markers are gone: the box is drawn, not written.
+    try testing.expect(!w.tester.hasText("☐"));
+    try testing.expect(!w.tester.hasText("☑"));
+}
+
+test "an inline formula is drawn without its dollars" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    w.app.pushMessage("user", "what is it?");
+    w.app.pushMessage("assistant", "The energy is $E = mc^2$ in that frame.");
+    w.app.pushMessage("assistant", "The wait is $\\min(2^n \\times 250, 8000)$ ms.");
+    w.tester.settle(0.5);
+
+    try testing.expect(w.tester.containsText("E = mc²"));
+    // The drawn string is what the converter produced, not the TeX source: a
+    // `times` or a stray backslash here would mean the run was not converted.
+    try testing.expect(w.tester.containsText("min(2ⁿ × 250, 8000) ms."));
+    try testing.expect(!w.tester.containsText("$"));
+    try testing.expect(!w.tester.containsText("\\times"));
+}
+
+test "a picture from a path is decoded and drawn, and a missing one says why" {
+    var w: Window = undefined;
+    try w.init();
+    defer w.deinit();
+
+    // A one-pixel PNG, written where the answer will point.
+    const path = harness.test_home ++ "/dot.png";
+    const size = try std.base64.standard.Decoder.calcSizeForSlice(dot_png_b64);
+    var bytes: [128]u8 = undefined;
+    try std.base64.standard.Decoder.decode(bytes[0..size], dot_png_b64);
+    const n = size;
+    std.Io.Dir.cwd().writeFile(w.threaded.io(), .{ .sub_path = path, .data = bytes[0..n] }) catch {};
+    defer std.Io.Dir.cwd().deleteFile(w.threaded.io(), path) catch {};
+
+    w.app.pushMessage("user", "show me");
+    w.app.pushMessage("assistant", "![the dot](" ++ path ++ ")");
+    w.tester.settle(0.5);
+
+    // The caption and the path are on the page, and the picture itself was
+    // taken: a failed decode would have said so in the caption's place.
+    try testing.expect(w.tester.hasText("the dot"));
+    try testing.expect(w.tester.containsText(path));
+    try testing.expect(!w.tester.hasText("unsupported format"));
+
+    // A path that is not there explains itself rather than drawing nothing.
+    w.app.pushMessage("assistant", "![gone](" ++ harness.test_home ++ "/missing.png)");
+    w.tester.settle(0.5);
+    try testing.expect(w.tester.hasText("gone"));
+    try testing.expect(w.tester.hasText("FileNotFound"));
 }
 
 test "a toast appears and goes away" {

@@ -8,7 +8,7 @@
 const std = @import("std");
 const ui = @import("nanoui").ui;
 
-pub const Kind = enum { paragraph, heading, bullet, code, rule, quote, table, footnote };
+pub const Kind = enum { paragraph, heading, bullet, code, rule, quote, table, footnote, image };
 
 pub const Block = struct {
     kind: Kind,
@@ -22,8 +22,15 @@ pub const Block = struct {
     lang: []const u8 = "",
     /// For bullets and quotes: nesting depth (0 = top level).
     indent: u8 = 0,
-    /// For bullets: what to draw before the text — `·`, `☐`, `☑` or `3.`.
+    /// For bullets: what to draw before the text — `·`, or the number an
+    /// ordered list keeps. A task draws a checkbox instead, from `task`.
     marker: []const u8 = "",
+    /// For bullets that are task items (`- [x] done`): whether the box is
+    /// ticked. Null when the item is not a task.
+    task: ?bool = null,
+    /// For an image block: the picture's alt text and where it is.
+    image_alt: []const u8 = "",
+    image_url: []const u8 = "",
     /// For tables: the header row's cells; rows follow in `text` as lines.
     table_header: []const []const u8 = &.{},
     /// For tables: per-column alignment, parallel to `table_header`.
@@ -237,20 +244,28 @@ pub fn parse(gpa: std.mem.Allocator, source: []const u8) !Doc {
             // checkbox for a task, or the number an ordered list keeps.
             var text = rest;
             var marker: []const u8 = "·";
+            var task: ?bool = null;
             if (std.mem.startsWith(u8, rest, "[ ] ") or std.mem.startsWith(u8, rest, "[ ]\t")) {
-                marker = "☐";
+                task = false;
                 text = rest[4..];
             } else if (std.mem.startsWith(u8, rest, "[x] ") or std.mem.startsWith(u8, rest, "[X] ") or
                 std.mem.startsWith(u8, rest, "[x]\t") or std.mem.startsWith(u8, rest, "[X]\t"))
             {
-                marker = "☑";
+                task = true;
                 text = rest[4..];
             } else {
                 const head = std.mem.trimEnd(u8, trimmed[0 .. trimmed.len - rest.len], " \t");
                 if (std.mem.endsWith(u8, head, ".") or std.mem.endsWith(u8, head, ")")) marker = try a.dupe(u8, head);
             }
             const inlined = try p.inl(text);
-            try p.addBlock(.{ .kind = .bullet, .text = inlined.text, .spans = inlined.spans, .indent = nestingDepth(line), .marker = marker });
+            try p.addBlock(.{ .kind = .bullet, .text = inlined.text, .spans = inlined.spans, .indent = nestingDepth(line), .marker = marker, .task = task });
+            continue;
+        }
+
+        // A line that is nothing but an image is drawn as the picture; one
+        // alongside other text stays its alt text, inline.
+        if (standaloneImage(trimmed)) |img| {
+            try p.addBlock(.{ .kind = .image, .text = "", .image_alt = try a.dupe(u8, img.alt), .image_url = try a.dupe(u8, img.url) });
             continue;
         }
 
@@ -372,6 +387,17 @@ fn separatorAlign(a: std.mem.Allocator, sep: []const u8, n: usize) ![]const Alig
 }
 
 /// A footnote definition, `[^label]: text`, or null.
+/// A line that is exactly one image: `![alt](url)`, and nothing else.
+fn standaloneImage(line: []const u8) ?struct { alt: []const u8, url: []const u8 } {
+    if (!std.mem.startsWith(u8, line, "![")) return null;
+    const close = std.mem.indexOfScalar(u8, line, ']') orelse return null;
+    if (close + 1 >= line.len or line[close + 1] != '(') return null;
+    if (!std.mem.endsWith(u8, line, ")")) return null;
+    const url = std.mem.trim(u8, line[close + 2 .. line.len - 1], " \t");
+    if (url.len == 0) return null;
+    return .{ .alt = line[2..close], .url = url };
+}
+
 fn footnoteDef(line: []const u8) ?struct { label: []const u8, text: []const u8 } {
     if (!std.mem.startsWith(u8, line, "[^")) return null;
     const close = std.mem.indexOf(u8, line, "]:") orelse return null;
@@ -506,6 +532,30 @@ const Builder = struct {
         b.start = @intCast(b.out.items.len);
     }
 
+    /// `$x^2$`: the formula set in italics, so it reads as mathematics rather
+    /// than as code. The few TeX shapes a chat actually uses are
+    /// folded into their Unicode equivalents — `x^2` becomes `x²`, `\alpha`
+    /// becomes `α` — because a real typesetter is a library, and what a reply
+    /// needs is a formula that reads correctly in the line it sits in.
+    fn math(b: *Builder, formula: []const u8) !void {
+        try b.flush();
+        const from: u32 = @intCast(b.out.items.len);
+        try texToUnicode(b, formula);
+        const to: u32 = @intCast(b.out.items.len);
+        if (to == from) return;
+        // Italic, in the text face. A serif face would read more like
+        // mathematics, but the bundled serif's italic has no Unicode
+        // superscript digits — `2⁵` came out as a missing-glyph advance —
+        // and a formula that loses its exponent is worse than one that looks
+        // like prose.
+        try b.spans.append(b.a, .{
+            .start = from,
+            .end = to,
+            .italic = true,
+        });
+        b.start = to;
+    }
+
     /// A link's label, underlined and clickable from `url`.
     fn link(b: *Builder, label: []const u8, url: []const u8) Error!void {
         const label_start: u32 = @intCast(b.out.items.len);
@@ -636,6 +686,16 @@ const Builder = struct {
                     if (inner.len >= 2 and inner[0] == ' ' and inner[inner.len - 1] == ' ' and std.mem.trim(u8, inner, " ").len > 0) inner = inner[1 .. inner.len - 1];
                     try b.code(inner);
                     i = close + ticks;
+                    continue;
+                }
+            }
+            if (c == '$') {
+                // Inline mathematics: `$E = mc^2$`. The opening `$` must not
+                // follow a word (`price$5` is not a formula), and the closing
+                // one must be on the same line with something between them.
+                if (inlineMath(src, i)) |m| {
+                    try b.math(m.body);
+                    i = m.end;
                     continue;
                 }
             }
@@ -794,6 +854,338 @@ fn findClose(src: []const u8, from: usize, marker: []const u8) ?usize {
             if (before_run or after_run) continue;
         }
         return i;
+    }
+    return null;
+}
+
+/// Writes `formula` with the small subset of TeX a chat uses turned into
+/// Unicode: Greek letters and symbols by name, superscripts and subscripts
+/// after `^` and `_`, and the sizing commands (`\mathrm`, `\text`, `\left`,
+/// …) removed from around what they size. Anything it does not know is left
+/// as written, so an unsupported command is visible rather than silently
+/// dropped.
+fn texToUnicode(b: *Builder, formula: []const u8) !void {
+    var i: usize = 0;
+    while (i < formula.len) {
+        const c = formula[i];
+        if (c == '\\') {
+            // A named symbol, or a command whose argument is plain text.
+            var j = i + 1;
+            while (j < formula.len and std.ascii.isAlphabetic(formula[j])) j += 1;
+            const name = formula[i + 1 .. j];
+            if (j == i + 1) {
+                // `\{`, `\}`, `\,`, `\;`, `\!`: the escaped character, or
+                // a thin space that the run does not need.
+                if (j < formula.len) {
+                    const escaped = formula[j];
+                    if (escaped == '{' or escaped == '}' or escaped == '%' or escaped == '$' or escaped == '&' or escaped == '#') {
+                        try b.put(formula[j .. j + 1]);
+                    }
+                    i = j + 1;
+                    continue;
+                }
+                try b.put(formula[i .. i + 1]);
+                i += 1;
+                continue;
+            }
+            if (symbol(name)) |text| {
+                try b.put(text);
+                i = j;
+                // A symbol's own argument would be wrong here; none of the
+                // table's entries take one.
+                continue;
+            }
+            if (isFunctionName(name)) {
+                // `\min`, `\log`: the command's own name is the text, set
+                // upright, which is what the reader expects to see.
+                try b.put(name);
+                i = j;
+                continue;
+            }
+            if (isSizing(name)) {
+                // `\mathrm{HMAC}`: the command sizes what follows, and the
+                // braces are punctuation to a reader, so both go.
+                i = j;
+                if (i < formula.len and formula[i] == '{') i += 1;
+                continue;
+            }
+            // An unknown command stays as it was written.
+            try b.put(formula[i..j]);
+            i = j;
+            continue;
+        }
+        if (c == '^' or c == '_') {
+            // `x^2`, `x^{2}`, `a_i`: the script that follows, raised or
+            // lowered by the Unicode character that matches it.
+            const script = if (c == '^') Script.superscript else Script.subscript;
+            if (scriptRun(b.a, formula, i + 1, script)) |run| {
+                try b.put(run.text);
+                i = run.end;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+        // Braces group, and carry no meaning once the commands are gone.
+        if (c == '{' or c == '}') {
+            i += 1;
+            continue;
+        }
+        try b.put(formula[i .. i + 1]);
+        i += 1;
+    }
+}
+
+const Script = enum {
+    superscript,
+    subscript,
+
+    fn map(self: Script, c: u8) ?[]const u8 {
+        // Two loops rather than one over a `switch`: the tables are tuples of
+        // different lengths, and a switch would have to unify their types.
+        switch (self) {
+            .superscript => inline for (superscripts) |e| {
+                if (e[0] == c) return e[1];
+            },
+            .subscript => inline for (subscripts) |e| {
+                if (e[0] == c) return e[1];
+            },
+        }
+        return null;
+    }
+
+    /// Digits, the arithmetic signs, and the letters that have a Unicode
+    /// script form. A character without one makes the whole run plain, so
+    /// `x_{a}` stays `x_a` rather than turning half of itself upside down.
+    const superscripts = .{
+        .{ '0', "⁰" },
+        .{ '1', "¹" },
+        .{ '2', "²" },
+        .{ '3', "³" },
+        .{ '4', "⁴" },
+        .{ '5', "⁵" },
+        .{ '6', "⁶" },
+        .{ '7', "⁷" },
+        .{ '8', "⁸" },
+        .{ '9', "⁹" },
+        .{ '+', "⁺" },
+        .{ '-', "⁻" },
+        .{ '=', "⁼" },
+        .{ '(', "⁽" },
+        .{ ')', "⁾" },
+        .{ 'n', "ⁿ" },
+        .{ 'i', "ⁱ" },
+        .{ 'a', "ᵃ" },
+        .{ 'b', "ᵇ" },
+        .{ 'c', "ᶜ" },
+        .{ 'd', "ᵈ" },
+        .{ 'e', "ᵉ" },
+        .{ 'h', "ʰ" },
+        .{ 'j', "ʲ" },
+        .{ 'k', "ᵏ" },
+        .{ 'l', "ˡ" },
+        .{ 'm', "ᵐ" },
+        .{ 'o', "ᵒ" },
+        .{ 'p', "ᵖ" },
+        .{ 'r', "ʳ" },
+        .{ 's', "ˢ" },
+        .{ 't', "ᵗ" },
+        .{ 'u', "ᵘ" },
+        .{ 'v', "ᵛ" },
+        .{ 'w', "ʷ" },
+        .{ 'x', "ˣ" },
+        .{ 'y', "ʸ" },
+        .{ 'z', "ᶻ" },
+    };
+
+    const subscripts = .{
+        .{ '0', "₀" },
+        .{ '1', "₁" },
+        .{ '2', "₂" },
+        .{ '3', "₃" },
+        .{ '4', "₄" },
+        .{ '5', "₅" },
+        .{ '6', "₆" },
+        .{ '7', "₇" },
+        .{ '8', "₈" },
+        .{ '9', "₉" },
+        .{ '+', "₊" },
+        .{ '-', "₋" },
+        .{ '=', "₌" },
+        .{ '(', "₍" },
+        .{ ')', "₎" },
+        .{ 'i', "ᵢ" },
+        .{ 'j', "ⱼ" },
+        .{ 'k', "ₖ" },
+        .{ 'l', "ₗ" },
+        .{ 'm', "ₘ" },
+        .{ 'n', "ₙ" },
+        .{ 'o', "ₒ" },
+        .{ 'p', "ₚ" },
+        .{ 'r', "ᵣ" },
+        .{ 's', "ₛ" },
+        .{ 't', "ₜ" },
+        .{ 'u', "ᵤ" },
+        .{ 'v', "ᵥ" },
+        .{ 'x', "ₓ" },
+    };
+};
+
+/// The script that starts at `at` (just after `^` or `_`), if every character
+/// of it maps: `{...}` groups, or a single character or digit run. The text is
+/// built in `a`, which is the frame's arena, so nothing has to free it.
+fn scriptRun(a: std.mem.Allocator, formula: []const u8, at: usize, script: Script) ?struct { text: []const u8, end: usize } {
+    if (at >= formula.len) return null;
+    var i = at;
+    var braced = false;
+    if (formula[i] == '{') {
+        braced = true;
+        i += 1;
+    }
+    var out: std.ArrayListUnmanaged(u8) = .empty;
+    const start = i;
+    while (i < formula.len) {
+        const c = formula[i];
+        if (braced and c == '}') break;
+        if (!braced and i > start and !std.ascii.isDigit(c)) break;
+        const mapped = script.map(c) orelse return null;
+        out.appendSlice(a, mapped) catch return null;
+        i += 1;
+    }
+    if (i == start) return null;
+    const text = out.toOwnedSlice(a) catch return null;
+    return .{ .text = text, .end = if (braced and i < formula.len) i + 1 else i };
+}
+
+/// The symbols a chat's formulas actually name.
+fn symbol(name: []const u8) ?[]const u8 {
+    const table = .{
+        .{ "alpha", "α" },
+        .{ "beta", "β" },
+        .{ "gamma", "γ" },
+        .{ "delta", "δ" },
+        .{ "epsilon", "ε" },
+        .{ "zeta", "ζ" },
+        .{ "eta", "η" },
+        .{ "theta", "θ" },
+        .{ "iota", "ι" },
+        .{ "kappa", "κ" },
+        .{ "lambda", "λ" },
+        .{ "mu", "μ" },
+        .{ "nu", "ν" },
+        .{ "xi", "ξ" },
+        .{ "pi", "π" },
+        .{ "rho", "ρ" },
+        .{ "sigma", "σ" },
+        .{ "tau", "τ" },
+        .{ "phi", "φ" },
+        .{ "chi", "χ" },
+        .{ "psi", "ψ" },
+        .{ "omega", "ω" },
+        .{ "Gamma", "Γ" },
+        .{ "Delta", "Δ" },
+        .{ "Theta", "Θ" },
+        .{ "Lambda", "Λ" },
+        .{ "Xi", "Ξ" },
+        .{ "Pi", "Π" },
+        .{ "Sigma", "Σ" },
+        .{ "Phi", "Φ" },
+        .{ "Psi", "Ψ" },
+        .{ "Omega", "Ω" },
+        .{ "times", "×" },
+        .{ "cdot", "·" },
+        .{ "div", "÷" },
+        .{ "pm", "±" },
+        .{ "mp", "∓" },
+        .{ "le", "≤" },
+        .{ "leq", "≤" },
+        .{ "ge", "≥" },
+        .{ "geq", "≥" },
+        .{ "ne", "≠" },
+        .{ "neq", "≠" },
+        .{ "approx", "≈" },
+        .{ "equiv", "≡" },
+        .{ "sim", "∼" },
+        .{ "propto", "∝" },
+        .{ "infty", "∞" },
+        .{ "to", "→" },
+        .{ "rightarrow", "→" },
+        .{ "leftarrow", "←" },
+        .{ "mapsto", "↦" },
+        .{ "sum", "∑" },
+        .{ "prod", "∏" },
+        .{ "int", "∫" },
+        .{ "partial", "∂" },
+        .{ "nabl", "∇" },
+        .{ "nabla", "∇" },
+        .{ "in", "∈" },
+        .{ "notin", "∉" },
+        .{ "subset", "⊂" },
+        .{ "supset", "⊃" },
+        .{ "cup", "∪" },
+        .{ "cap", "∩" },
+        .{ "forall", "∀" },
+        .{ "exists", "∃" },
+        .{ "emptyset", "∅" },
+        .{ "land", "∧" },
+        .{ "lor", "∨" },
+        .{ "neg", "¬" },
+        .{ "perp", "⊥" },
+        .{ "angle", "∠" },
+        .{ "deg", "°" },
+        .{ "prime", "′" },
+        .{ "ldots", "…" },
+        .{ "dots", "…" },
+        .{ "cdots", "⋯" },
+        .{ "hbar", "ℏ" },
+        .{ "ell", "ℓ" },
+        .{ "sqrt", "√" },
+    };
+    inline for (table) |entry| {
+        if (std.mem.eql(u8, name, entry[0])) return entry[1];
+    }
+    return null;
+}
+
+/// Commands whose name is what they print: an operator set upright.
+fn isFunctionName(name: []const u8) bool {
+    const table = [_][]const u8{ "min", "max", "log", "ln", "lg", "sin", "cos", "tan", "sec", "csc", "cot", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "exp", "lim", "sup", "inf", "det", "dim", "ker", "deg", "gcd", "mod", "bmod" };
+    for (table) |t| if (std.mem.eql(u8, name, t)) return true;
+    return false;
+}
+
+/// Commands that only size or space what follows them.
+fn isSizing(name: []const u8) bool {
+    const table = [_][]const u8{ "mathrm", "mathbf", "mathit", "mathsf", "mathtt", "mathcal", "text", "textrm", "operatorname", "left", "right", "big", "Big", "bigg", "Bigg", "displaystyle", "textstyle" };
+    for (table) |t| if (std.mem.eql(u8, name, t)) return true;
+    return false;
+}
+
+/// An inline formula at `$`: its body without the delimiters, and where the
+/// closing `$` leaves the run. A `$$` opens a display formula, which is not
+/// what an answer's prose uses, so this only matches a lone `$`.
+fn inlineMath(src: []const u8, at: usize) ?struct { body: []const u8, end: usize } {
+    if (at > 0 and (std.ascii.isAlphanumeric(src[at - 1]) or src[at - 1] == '$')) return null;
+    var i = at + 1;
+    if (i >= src.len or src[i] == '$') return null;
+    // The body starts with a visible character, not a space.
+    if (src[i] == ' ' or src[i] == '\t') return null;
+    while (i < src.len) : (i += 1) {
+        const c = src[i];
+        if (c == '\n') return null;
+        if (c == '\\') {
+            i += 1;
+            continue;
+        }
+        if (c == '$') {
+            // A lone `$` closes; `$$` is a display formula's delimiter and is
+            // not part of an inline one.
+            if (i + 1 < src.len and src[i + 1] == '$') return null;
+            const body = src[at + 1 .. i];
+            if (body.len == 0) return null;
+            if (std.ascii.isWhitespace(body[body.len - 1])) return null;
+            return .{ .body = body, .end = i + 1 };
+        }
     }
     return null;
 }
@@ -957,14 +1349,17 @@ test "nested bullets record their indent" {
     try testing.expectEqual(@as(u8, 2), doc.blocks[2].indent);
 }
 
-test "task lists carry a checkbox marker" {
-    var doc = try parse(testing.allocator, "- [ ] todo\n- [x] done");
+test "task lists record their box's state" {
+    var doc = try parse(testing.allocator, "- [ ] todo\n- [x] done\n- plain");
     defer doc.deinit();
     try testing.expectEqual(Kind.bullet, doc.blocks[0].kind);
-    try testing.expectEqualStrings("☐", doc.blocks[0].marker);
+    try testing.expectEqual(@as(?bool, false), doc.blocks[0].task);
     try testing.expectEqualStrings("todo", textOf(&doc, 0));
-    try testing.expectEqualStrings("☑", doc.blocks[1].marker);
+    try testing.expectEqual(@as(?bool, true), doc.blocks[1].task);
     try testing.expectEqualStrings("done", textOf(&doc, 1));
+    // A plain bullet is not a task and keeps its dot.
+    try testing.expectEqual(@as(?bool, null), doc.blocks[2].task);
+    try testing.expectEqualStrings("·", doc.blocks[2].marker);
 }
 
 test "an ordered list keeps its number, and a bullet its dot" {
@@ -1113,10 +1508,61 @@ test "links keep the label and open their url" {
     try testing.expect(underlined);
 }
 
-test "an image is its alt text" {
+test "a line that is only an image becomes an image block" {
     var doc = try parse(testing.allocator, "![a chart](chart.png)");
     defer doc.deinit();
-    try testing.expectEqualStrings("[image: a chart]", textOf(&doc, 0));
+    try testing.expectEqual(@as(usize, 1), doc.blocks.len);
+    try testing.expectEqual(Kind.image, doc.blocks[0].kind);
+    try testing.expectEqualStrings("a chart", doc.blocks[0].image_alt);
+    try testing.expectEqualStrings("chart.png", doc.blocks[0].image_url);
+}
+
+test "an image inside a sentence stays its alt text" {
+    var doc = try parse(testing.allocator, "see ![a chart](chart.png) above");
+    defer doc.deinit();
+    try testing.expectEqual(Kind.paragraph, doc.blocks[0].kind);
+    try testing.expectEqualStrings("see [image: a chart] above", textOf(&doc, 0));
+}
+
+test "an inline formula drops its delimiters and is set in italics" {
+    var doc = try parse(testing.allocator, "energy is $E = mc^2$ exactly");
+    defer doc.deinit();
+    const block = doc.blocks[0];
+    // The `^2` is written as the superscript character: a line of prose has
+    // no way to raise a glyph, and `mc²` reads correctly where `mc^2` does not.
+    try testing.expectEqualStrings("energy is E = mc² exactly", block.text);
+    try testing.expectEqual(@as(usize, 1), block.spans.len);
+    const span = block.spans[0];
+    try testing.expectEqualStrings("E = mc²", block.text[span.start..span.end]);
+    try testing.expect(span.italic);
+    // No family override: the serif face's italic has no superscript digits.
+    try testing.expect(span.family == null);
+}
+
+test "the TeX a chat actually writes is folded into Unicode" {
+    var doc = try parse(testing.allocator, "$\\alpha \\times r^2$ and $x_{i} \\le 3$ and $\\mathrm{HMAC}(k)$");
+    defer doc.deinit();
+    try testing.expectEqualStrings("α × r² and xᵢ ≤ 3 and HMAC(k)", textOf(&doc, 0));
+}
+
+test "a TeX operator prints its own name upright" {
+    var doc = try parse(testing.allocator, "$\\min(2^n \\times 250, \\log x)$");
+    defer doc.deinit();
+    try testing.expectEqualStrings("min(2ⁿ × 250, log x)", textOf(&doc, 0));
+}
+
+test "an unknown TeX command stays as written" {
+    var doc = try parse(testing.allocator, "$\\notacommand x$");
+    defer doc.deinit();
+    try testing.expectEqualStrings("\\notacommand x", textOf(&doc, 0));
+}
+
+test "a lone dollar in prose is not a formula" {
+    // `$PATH`, `price$5` and an unclosed `$` all stay as written.
+    var doc = try parse(testing.allocator, "set $PATH, cost $5, and a lone $ sign");
+    defer doc.deinit();
+    try testing.expectEqualStrings("set $PATH, cost $5, and a lone $ sign", textOf(&doc, 0));
+    try testing.expectEqual(@as(usize, 0), doc.blocks[0].spans.len);
 }
 
 test "bare urls, www hosts and email addresses become links" {
