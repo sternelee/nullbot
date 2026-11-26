@@ -261,11 +261,16 @@ test "screenshots" {
     w.settle(1);
     try shoot(&w, "03-config");
 
-    // The same page in a window tall enough for every section, so the lower
-    // half of the form can be looked at without scrolling.
+    // A board with more rows than the Model one: the rail stays put, the card
+    // scrolls under the pinned bar, and the bar keeps its place.
+    w.app.cfg_board = .agent;
+    w.tester.settle(0.4);
     w.tester.resize(1180, 1500);
     w.tester.settle(0.5);
     try shoot(&w, "10-config-full");
+    w.tester.resize(1180, 800);
+    w.app.cfg_board = .model;
+    w.tester.settle(0.4);
     w.tester.resize(1180, 800);
     w.tester.settle(0.5);
 

@@ -306,13 +306,13 @@ test "the config page opens at its top after a scrolled transcript" {
     w.app.openPage(.config);
     w.tester.settle(0.5);
 
-    // The first card is on screen, near the top: the page did not inherit the
-    // transcript's offset. `findText` returns a node's rect even when it is
-    // scrolled off the top (a negative y), so the assertion must require the
-    // card to be visible as well as near the top.
-    const card = w.tester.findText("Built-in nullclaw runtime") orelse return error.NoRuntimeCard;
+    // The first board's first row is on screen, near the top: the page did not
+    // inherit the transcript's offset. `findText` returns a node's rect even
+    // when it is scrolled off the top (a negative y), so the assertion must
+    // require the row to be visible as well as near the top.
+    const card = w.tester.findText("Default model") orelse return error.NoModelRow;
     try testing.expect(card.y > 0);
-    try testing.expect(card.y < 220);
+    try testing.expect(card.y < 320);
     try testing.expect(w.tester.hasText("Provider"));
 }
 
@@ -1136,25 +1136,22 @@ test "the config page draws its own controls" {
     w.app.openPage(.config);
     w.tester.settle(0.5);
 
-    // nanoterm-style page: a heading, a runtime card and one section per
-    // group. The raw JSON editor is folded away until it is asked for.
-    //
-    // The sections are the settings worth a control: what answers, where it
-    // works, which servers it may call, and whether it runs on a schedule.
-    // The rest of config.json stays in the advanced fold.
+    // The page is a rail of boards and one board's card. What used to be
+    // thirteen sections in one scroll is now fourteen decisions, one per
+    // board, and the raw JSON tree is gone entirely.
     try testing.expect(w.tester.hasText("Configuration"));
-    try testing.expect(w.tester.hasText("Built-in nullclaw runtime"));
+    // Every board is named in the rail...
+    for (std.enums.values(state.ConfigBoard)) |board| {
+        try testing.expect(w.tester.hasText(board.label()));
+    }
+    // ...and the board it opens on is the one that answers first.
     try testing.expect(w.tester.hasText("Provider"));
-    try testing.expect(w.tester.hasText("Workspace"));
-    try testing.expect(w.tester.hasText("MCP servers"));
-    try testing.expect(w.tester.hasText("Cron"));
-    try testing.expect(w.tester.hasText("Skills"));
-    try testing.expect(w.tester.hasText("Capabilities"));
+    try testing.expect(w.tester.hasText("Default model"));
     try testing.expect(w.tester.containsText("Reload"));
     try testing.expect(w.tester.containsText("Save & restart"));
     try testing.expect(w.tester.containsText("model.primary"));
-    try testing.expect(w.tester.containsText("Show advanced"));
-    try testing.expect(!w.tester.containsText("Hide advanced"));
+    // No JSON tree, and no fold that hides one.
+    try testing.expect(!w.tester.containsText("Show advanced"));
 }
 
 test "a json page folds what it is told to" {
@@ -1756,36 +1753,97 @@ test "the config page paints the file it loaded" {
     // cannot lose the file.
     try testing.expect(w.app.toast.len == 0);
 
-    // The raw JSON tree lives behind the Advanced fold; open it and draw a
-    // frame so the rows exist to be measured.
-    w.app.show_advanced_config = true;
-    // Every container open, so the value is a row rather than a summary.
-    w.app.expandAll();
-    w.tester.frame();
-
-    // Both keys are painted. The tree lives in the scrolling band, so its
-    // rows can sit past the fold once the form above them is long; what
-    // matters is that the band ends above the pinned bar, not that every row
-    // is on screen.
+    // The board the page opens on is Model, and its card carries the file's
+    // value in a field rather than in a tree of keys.
+    try testing.expectEqual(state.ConfigBoard.model, w.app.cfg_board);
+    try testing.expect(w.tester.hasText("Default model"));
+    try testing.expect(w.tester.hasText("Temperature"));
+    // The field holds the model, not the provider-qualified primary: the
+    // provider is its own control on the same board.
+    try testing.expectEqualStrings("stub-model", w.app.cfg_default_model.text());
+    // The action bar is pinned to the window, not to the end of the content.
     const bar = w.tester.findText("Reload") orelse return error.NoToolbar;
-    const lines = w.app.json_lines orelse return error.NoRowsLoaded;
-    var found: usize = 0;
-    for (lines.slice()) |row| {
-        if (w.tester.findText(row.text) == null) continue;
-        found += 1;
-    }
-    // The bar is pinned to the window, not to the end of the content.
     try testing.expect(bar.y < w.tester.size.h);
-    try testing.expect(found >= 2);
-    // The tree holds the file's keys. It scrolls inside the band, so a row
-    // past the fold is still in the list even when it is not on screen; the
-    // value itself sits under `agents.defaults.model.primary`, three levels
-    // down, so the tree is checked for the top-level key it starts from.
-    var saw_agents = false;
-    for (lines.slice()) |row| {
-        if (std.mem.indexOf(u8, row.text, "agents") != null) saw_agents = true;
+}
+
+// Regression: the page used to carry a second, unstructured copy of the same
+// file — a JSON tree under the form — so the same value was answered twice and
+// the tree was the slower answer. It is gone; the boards are the answer.
+test "the config page draws no JSON tree" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io, "{\n  \"agents\": { \"defaults\": { \"model\": { \"primary\": \"openrouter/stub-model\" } } }\n}\n");
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.config);
+    w.settle(2);
+
+    // No tree, and no tree toolbar: the boards read the file, they do not
+    // echo it. (`agents.defaults` is still on the page, in the note beside
+    // the field — which is the point: the value is explained where it is
+    // set, not repeated as a row.)
+    try testing.expect(!w.tester.hasText("Expand all"));
+    try testing.expect(!w.tester.hasText("Collapse all"));
+    try testing.expect(!w.tester.containsText("{\"agents\""));
+
+    // The dotted-path editor is still there, on the board that owns it.
+    w.app.cfg_board = .advanced;
+    w.tester.settle(0.4);
+    try testing.expect(w.tester.hasText("Set a dotted path directly (advanced)"));
+    try testing.expect(!w.tester.containsText("{\"agents\""));
+}
+
+// The page is one board at a time: the rail switches it, and only the chosen
+// board's fields are drawn.
+test "the configuration page shows one board at a time" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io, harness.page_config);
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.config);
+    w.settle(2);
+
+    // Every board is named in the rail.
+    for (std.enums.values(state.ConfigBoard)) |board| {
+        try testing.expect(w.tester.hasText(board.label()));
     }
-    try testing.expect(saw_agents);
+
+    // The Model board's fields, and none of the Memory board's.
+    try testing.expect(w.tester.hasText("Temperature"));
+    try testing.expect(!w.tester.hasText("Search by meaning"));
+
+    // Picking another board in the rail swaps which card is drawn. The rail's
+    // own label is used, not "Memory", which is also a page in the sidebar.
+    try w.tester.clickText("Autonomy");
+    w.tester.settle(0.4);
+    try testing.expectEqual(state.ConfigBoard.autonomy, w.app.cfg_board);
+    try testing.expect(w.tester.hasText("Block high-risk commands"));
+    try testing.expect(!w.tester.hasText("Temperature"));
+
+    // The memory board is reached the same way, and shows its own switch.
+    w.app.cfg_board = .memory;
+    w.tester.settle(0.4);
+    try testing.expect(w.tester.hasText("Search by meaning"));
+    try testing.expect(!w.tester.hasText("Block high-risk commands"));
+
+    // And the action bar is still there, still pinned: switching boards must
+    // not take the page's one control away.
+    try testing.expect(w.tester.hasText("Reload"));
 }
 
 test "a new chat gets its own session, not the one that was open" {

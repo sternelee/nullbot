@@ -935,48 +935,118 @@ fn jsonToolbar(s: *AppState, c: *ui.Context) void {
 }
 
 fn configPage(s: *AppState, c: *ui.Context) void {
-    // Left-aligned with the header, like the JSON pages: the form is a column
-    // of labelled rows, and a centred one would drift away from its own title.
+    // The page is divided: an area rail down the left, the chosen board
+    // beside it, and the action bar pinned under both. It used to be one
+    // scroll of every section with a JSON tree beneath them, so finding "the
+    // temperature" meant scrolling past twelve cards and knowing it lived
+    // under Model.
     //
-    // The page is two bands: the form scrolls, and the action bar is pinned
-    // under it. Save used to sit after five sections, so on a short window it
-    // was below the fold — the one control the page exists for, out of reach
-    // until you scrolled to the end.
-    // `hFull` on the band is what makes the split work: without it the column
-    // grows to its content, the scroller never has less room than it needs,
-    // and the action bar ends up below the fold — pinned to nothing.
+    // `hFull` on the outer column is what makes the pinned bar work: without
+    // it the column grows to its content, the scroller never has less room
+    // than it needs, and the bar ends up below the fold.
     const outer = ui.div(c).column().grow().minW(0).wFull().px(22).pt(16);
     defer outer.end();
 
-    // The scroller is closed before the bar is drawn. A `defer` here would
-    // leave it open for the rest of the function, and the bar would be drawn
-    // inside it — scrolling away with the form instead of staying put.
+    // The two bands are closed before the bar is drawn. A `defer` here would
+    // leave them open for the rest of the function, the bar would be drawn
+    // inside the row, and the row would divide its height between the scroller
+    // and the bar — which is how the board ended up in a 24-point window.
     {
-        // `clip` as well as `scrollY`: a scrolling box does not cut its
-        // content by itself, so the form ran on over the pinned bar and drew
-        // through it. Keyed so its offset is its own: it shares a structural
-        // position with the transcript's scroller, and without the key the two
-        // resolve to the same id and the transcript's follow-to-end offset
-        // opened this page past its first section.
-        ui.key(c, "config-scroll");
-        const scroller = ui.div(c).column().grow().minW(0).wFull().scrollY().clip();
-        defer scroller.end();
-        // The settings measure, as zeron's own: a card wider than this reads as
-        // a table rather than a form, and its rows drift apart.
-        const centre = ui.div(c).row().wFull().justifyCenter();
-        defer centre.end();
-        const page = ui.div(c).column().w(design.Spacing.settings_measure).gap(22).pb(24);
-        defer page.end();
+        const bands = ui.div(c).row().grow().minW(0).wFull().gap(20);
+        defer bands.end();
 
-        // The shell header already names the page and its file, so this page
-        // starts with the runtime card rather than a second title.
-        runtimeStatusCard(s, c);
+        configRail(s, c);
+
+        // The board's scroller. `clip` as well as `scrollY`: a scrolling box
+        // does not cut its content by itself, so the form would run on under
+        // the bar. Keyed so its offset is its own — it shares a structural
+        // position with the other pages' scrollers.
+        ui.key(c, "config-scroll");
+        // `hFull` as well as `grow`: in a row a child's height is its own
+        // content's, so a growing column would be exactly as tall as the board
+        // and never scroll — and, with `clip`, would show only its first line.
+        const scroller = ui.div(c).column().grow().minW(0).wFull().hFull().scrollY().clip().pb(24);
+        defer scroller.end();
+
         if (s.config == null) configMissingNotice(s, c);
-        commonConfigForm(s, c);
-        advancedSection(s, c);
+        configBoard(s, c, s.cfg_board);
     }
 
     configActions(s, c);
+}
+
+/// The rail of decisions down the page's left side: one row per board, the
+/// chosen one lit. A rail rather than tabs because fourteen labels do not fit
+/// across, and a vertical list is what a settings page reads as.
+fn configRail(s: *AppState, c: *ui.Context) void {
+    // `hFull` as well as a fixed width: a column with no height lets its rows
+    // lay out past the bottom of the window, and a clipped row is not a hit —
+    // the rail would be visible and unclickable.
+    const rail = ui.div(c).column().w(design.Spacing.config_rail)
+        .minW(design.Spacing.config_rail).hFull().scrollY().gap(1);
+    defer rail.end();
+
+    for (std.enums.values(state.ConfigBoard)) |board| {
+        const chosen = board == s.cfg_board;
+        const row = ui.pressable(c, .{
+            .direction = .row,
+            .width = .fill,
+            .gap = 9,
+            .padding = .xy(10, 7),
+            .radius = 7,
+            .align_items = .center,
+            // The chosen board sits on a raised surface: the same shape as an
+            // unpressed row, so the rail does not jump as the choice moves.
+            .background = if (chosen) s.palette.raised else null,
+        }, s.palette.hover);
+        defer ui.end(c);
+        ui.icon(c, board.icon(), .{
+            .size = 12,
+            .color = if (chosen) s.palette.accent else s.palette.muted,
+        });
+        ui.text(c, board.label(), .{
+            .size = 12.5,
+            .weight = if (chosen) .medium else .regular,
+            .color = if (chosen) s.palette.text else s.palette.muted,
+        });
+        if (row.clicked) s.cfg_board = board;
+    }
+}
+
+/// One board: its sentence, then its card. The rail names the board, so the
+/// heading here is the sentence that says what the board decides.
+fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
+    const column = ui.div(c).column().wFull().maxW(design.Spacing.settings_measure).gap(10);
+    defer column.end();
+
+    if (board.note().len > 0) {
+        ui.text(c, board.note(), .{
+            .size = 11.5,
+            .color = s.palette.faint,
+            .wrap = true,
+            .leading = 1.4,
+        });
+    }
+
+    const card = settingsCard(c, s);
+    defer card.end();
+
+    switch (board) {
+        .model => modelBoard(s, c),
+        .agent => agentBoard(s, c),
+        .autonomy => autonomyBoard(s, c),
+        .workspace => workspaceBoard(s, c),
+        .memory => memoryBoard(s, c),
+        .server => serverBoard(s, c),
+        .execution => executionBoard(s, c),
+        .gateway => gatewayBoard(s, c),
+        .mcp => mcpBoard(s, c),
+        .schedules => schedulesBoard(s, c),
+        .reliability => reliabilityBoard(s, c),
+        .diagnostics => diagnosticsBoard(s, c),
+        .extras => extrasBoard(s, c),
+        .advanced => advancedBoard(s, c),
+    }
 }
 
 /// The state of the loaded file, as one chip: what the header shows in
@@ -1287,155 +1357,119 @@ fn autonomyField(s: *AppState, c: *ui.Context) void {
 /// which servers it can call, and whether it runs on a schedule. The rest of
 /// `config.json` stays in the advanced fold — a form that mirrors every key is
 /// a worse editor than the file itself.
-fn commonConfigForm(s: *AppState, c: *ui.Context) void {
-    {
-        const section = settingsSection(c, s, "Model", "Which model answers, and how it is asked.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        providerField(s, c);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Default model", "After the slash in `agents.defaults.model.primary`.", "glm-4.6, claude-sonnet-4", &s.cfg_default_model);
-        settingsRule(c, s);
-        // A key is a secret: bullets, not the value on screen and in every
-        // screenshot of this page.
-        settingsTextFieldOpts(s, c, "API key", "`models.providers.<name>.api_key`.", "the provider's key", &s.cfg_api_key, .{ .password = true });
-        settingsRule(c, s);
-        settingsTextFieldWide(s, c, "Base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Temperature", "`default_temperature`: how much variation the model may take.", "0.7", &s.cfg_temperature);
-        settingsRule(c, s);
-        {
-            var picked: ?usize = s.cfg_reasoning_effort;
-            settingsSelect(s, c, "reasoning-effort", "Reasoning effort", "`reasoning_effort`: how hard a reasoning model thinks.", &state.reasoning_efforts, &picked, "not set");
-            s.cfg_reasoning_effort = picked;
-        }
-    }
-    {
-        const section = settingsSection(c, s, "Workspace", "The directory the agent may read and write.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsTextFieldWide(s, c, "Path", "`workspace`. Empty uses the runtime's default.", "~/.nullclaw/workspace", &s.cfg_workspace);
-    }
-    {
-        const section = settingsSection(c, s, "Agent", "How one turn runs: how far it may go, and how much it remembers.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsTextField(s, c, "Max tool iterations", "`agent.max_tool_iterations`: tool calls one turn may make.", "1000", &s.cfg_max_tool_iterations);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Max history messages", "`agent.max_history_messages`: how much of the conversation is sent.", "100", &s.cfg_max_history);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Compact context", "`agent.compact_context`: summarise long turns instead of dropping them.", &s.cfg_compact_context);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Timezone", "`agent.timezone`: the zone the agent reasons about times in.", "UTC", &s.cfg_timezone);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Message timeout", "`agent.message_timeout_secs`: how long one turn may take.", "600", &s.cfg_message_timeout);
-    }
-    {
-        const section = settingsSection(c, s, "Autonomy", "What the agent may do without asking.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        autonomyField(s, c);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Workspace only", "`autonomy.workspace_only`: hold the agent to the workspace.", &s.cfg_workspace_only);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Max actions per hour", "`autonomy.max_actions_per_hour`: the rate the agent is held to.", "20", &s.cfg_max_actions);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Block high-risk commands", "`autonomy.block_high_risk_commands`: refuse the dangerous ones outright.", &s.cfg_block_high_risk);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Ask for medium risk", "`autonomy.require_approval_for_medium_risk`: confirm the middle ones.", &s.cfg_approve_medium);
-    }
-    {
-        const section = settingsSection(c, s, "Runtime", "Where the agent's commands run.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        {
-            var picked: usize = s.cfg_runtime_kind;
-            const names = [_][]const u8{ "Native", "Docker" };
-            settingsSegmented(s, c, "Kind", "`runtime.kind`: this process, or a container.", &names, &picked);
-            s.cfg_runtime_kind = picked;
-        }
-        settingsRule(c, s);
-        settingsTextFieldWide(s, c, "Docker image", "`runtime.docker.image`: the container the agent runs in.", "alpine:3.24", &s.cfg_docker_image);
-    }
-    {
-        const section = settingsSection(c, s, "Gateway", "The HTTP server this window serves for other clients.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsTextField(s, c, "Host", "`gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Port", "`gateway.port`.", "3000", &s.cfg_gateway_port);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Require pairing", "`gateway.require_pairing`: a client must pair before it is served.", &s.cfg_gateway_require_pairing);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Allow public bind", "`gateway.allow_public_bind`: listen beyond this machine.", &s.cfg_gateway_allow_public_bind);
-    }
-    {
-        const section = settingsSection(c, s, "Memory", "Which engine stores turns, and whether it searches by meaning.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        memoryField(s, c);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Search by meaning", "`memory.search.enabled`: embed and search turns semantically.", &s.cfg_memory_search);
-    }
-    {
-        const section = settingsSection(c, s, "MCP servers", "One per line: `name command`. The agent can call these.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        mcpField(s, c);
-    }
-    {
-        const section = settingsSection(c, s, "Schedules", "Whether tasks run on a timer, and how many at once.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsSwitch(s, c, "Run scheduled tasks", "`cron.enabled`.", &s.cfg_cron_enabled);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Cron interval", "Minutes between ticks, `cron.interval_minutes`.", "30", &s.cfg_cron_interval);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Scheduler on", "`scheduler.enabled`: the task runner itself.", &s.cfg_scheduler_enabled);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Max tasks", "`scheduler.max_tasks`: how many the runner holds.", "64", &s.cfg_scheduler_max_tasks);
-    }
-    {
-        const section = settingsSection(c, s, "Reliability", "How hard a failing provider call is retried.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsTextField(s, c, "Provider retries", "`reliability.provider_retries`.", "2", &s.cfg_retries);
-        settingsRule(c, s);
-        settingsTextField(s, c, "Backoff", "`reliability.provider_backoff_ms`: wait between tries.", "500", &s.cfg_backoff_ms);
-    }
-    {
-        const section = settingsSection(c, s, "Diagnostics", "What the runtime records while it works.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
-        settingsRule(c, s);
-        settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
-    }
-    {
-        const section = settingsSection(c, s, "Skills", "Installed skills, read from the workspace. Manage them with `nullclaw skills`.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        skillsSummary(s, c);
-    }
-    {
-        const section = settingsSection(c, s, "Capabilities", "What this build has, and what the config turns on.");
-        defer section.end();
-        const card = settingsCard(c, s);
-        defer card.end();
-        capabilitiesSummary(s, c);
-    }
+fn modelBoard(s: *AppState, c: *ui.Context) void {
+    providerField(s, c);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Default model", "After the slash in `agents.defaults.model.primary`.", "glm-4.6, claude-sonnet-4", &s.cfg_default_model);
+    settingsRule(c, s);
+    // A key is a secret: bullets, not the value on screen and in every
+    // screenshot of this page.
+    settingsTextFieldOpts(s, c, "API key", "`models.providers.<name>.api_key`.", "the provider's key", &s.cfg_api_key, .{ .password = true });
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "Base URL", "`models.providers.<name>.base_url`.", "https://api.example.com/v1", &s.cfg_api_base_url);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Temperature", "`default_temperature`: how much variation the model may take.", "0.7", &s.cfg_temperature);
+    settingsRule(c, s);
+    var picked: ?usize = s.cfg_reasoning_effort;
+    settingsSelect(s, c, "reasoning-effort", "Reasoning effort", "`reasoning_effort`: how hard a reasoning model thinks.", &state.reasoning_efforts, &picked, "not set");
+    s.cfg_reasoning_effort = picked;
+}
+
+fn agentBoard(s: *AppState, c: *ui.Context) void {
+    settingsTextField(s, c, "Max tool iterations", "`agent.max_tool_iterations`: tool calls one turn may make.", "1000", &s.cfg_max_tool_iterations);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Max history messages", "`agent.max_history_messages`: how much of the conversation is sent.", "100", &s.cfg_max_history);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Compact context", "`agent.compact_context`: summarise long turns instead of dropping them.", &s.cfg_compact_context);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Timezone", "`agent.timezone`: the zone the agent reasons about times in.", "UTC", &s.cfg_timezone);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Message timeout", "`agent.message_timeout_secs`: how long one turn may take.", "600", &s.cfg_message_timeout);
+}
+
+fn autonomyBoard(s: *AppState, c: *ui.Context) void {
+    autonomyField(s, c);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Workspace only", "`autonomy.workspace_only`: hold the agent to the workspace.", &s.cfg_workspace_only);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Max actions per hour", "`autonomy.max_actions_per_hour`: the rate the agent is held to.", "20", &s.cfg_max_actions);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Block high-risk commands", "`autonomy.block_high_risk_commands`: refuse the dangerous ones outright.", &s.cfg_block_high_risk);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Ask for medium risk", "`autonomy.require_approval_for_medium_risk`: confirm the middle ones.", &s.cfg_approve_medium);
+}
+
+fn workspaceBoard(s: *AppState, c: *ui.Context) void {
+    settingsTextFieldWide(s, c, "Path", "`workspace`. Empty uses the runtime's default.", "~/.nullclaw/workspace", &s.cfg_workspace);
+}
+
+fn memoryBoard(s: *AppState, c: *ui.Context) void {
+    memoryField(s, c);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Search by meaning", "`memory.search.enabled`: embed and search turns semantically.", &s.cfg_memory_search);
+}
+
+fn serverBoard(s: *AppState, c: *ui.Context) void {
+    runtimeStatusCard(s, c);
+}
+
+fn executionBoard(s: *AppState, c: *ui.Context) void {
+    var picked: usize = s.cfg_runtime_kind;
+    const names = [_][]const u8{ "Native", "Docker" };
+    settingsSegmented(s, c, "Kind", "`runtime.kind`: this process, or a container.", &names, &picked);
+    s.cfg_runtime_kind = picked;
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "Docker image", "`runtime.docker.image`: the container the agent runs in.", "alpine:3.24", &s.cfg_docker_image);
+}
+
+fn gatewayBoard(s: *AppState, c: *ui.Context) void {
+    settingsTextField(s, c, "Host", "`gateway.host`.", "127.0.0.1", &s.cfg_gateway_host);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Port", "`gateway.port`.", "3000", &s.cfg_gateway_port);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Require pairing", "`gateway.require_pairing`: a client must pair before it is served.", &s.cfg_gateway_require_pairing);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Allow public bind", "`gateway.allow_public_bind`: listen beyond this machine.", &s.cfg_gateway_allow_public_bind);
+}
+
+fn mcpBoard(s: *AppState, c: *ui.Context) void {
+    mcpField(s, c);
+}
+
+fn schedulesBoard(s: *AppState, c: *ui.Context) void {
+    settingsSwitch(s, c, "Run scheduled tasks", "`cron.enabled`.", &s.cfg_cron_enabled);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Cron interval", "Minutes between ticks, `cron.interval_minutes`.", "30", &s.cfg_cron_interval);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Scheduler on", "`scheduler.enabled`: the task runner itself.", &s.cfg_scheduler_enabled);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Max tasks", "`scheduler.max_tasks`: how many the runner holds.", "64", &s.cfg_scheduler_max_tasks);
+}
+
+fn reliabilityBoard(s: *AppState, c: *ui.Context) void {
+    settingsTextField(s, c, "Provider retries", "`reliability.provider_retries`.", "2", &s.cfg_retries);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Backoff", "`reliability.provider_backoff_ms`: wait between tries.", "500", &s.cfg_backoff_ms);
+}
+
+fn diagnosticsBoard(s: *AppState, c: *ui.Context) void {
+    settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
+}
+
+fn extrasBoard(s: *AppState, c: *ui.Context) void {
+    skillsSummary(s, c);
+    settingsRule(c, s);
+    capabilitiesSummary(s, c);
+}
+
+/// The dotted-path editor: the one place a key the boards do not cover can be
+/// set. There is no JSON tree beside it any more — a form of thirteen boards
+/// plus a second, unstructured copy of the same file was two answers to the
+/// same question, and the tree was the slower one.
+fn advancedBoard(s: *AppState, c: *ui.Context) void {
+    configEditor(s, c);
 }
 
 /// The MCP list: one `name command` per line, in a box that grows with it.
@@ -1572,31 +1606,6 @@ fn configStatusLine(s: *AppState, c: *ui.Context) void {
 
 /// A clickable heading that hides the raw editor until asked for, instead
 /// of a bare switch that leaves the page's longest section always open.
-fn advancedSection(s: *AppState, c: *ui.Context) void {
-    {
-        const head = ui.div(c).row().wFull().gap(8).itemsCenter();
-        defer head.end();
-        const label = if (s.show_advanced_config) "Hide advanced" else "Show advanced · raw JSON and dotted paths";
-        const icon = if (s.show_advanced_config) "chevron.up" else "chevron.down";
-        if (ui.button(c, label, .{ .variant = .ghost, .size = 12, .icon = icon }).clicked) {
-            s.show_advanced_config = !s.show_advanced_config;
-        }
-        ui.spacer(c);
-        if (s.config) |doc| {
-            if (doc.object()) |map| {
-                ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d} top-level keys", .{map.count()});
-            }
-        }
-    }
-    if (!s.show_advanced_config) return;
-    {
-        const section = settingsSection(c, s, "Advanced", "Set any dotted path directly, or read the whole file as a JSON tree.");
-        defer section.end();
-        configEditor(s, c);
-        jsonView(s, c);
-    }
-}
-
 fn configEditor(s: *AppState, c: *ui.Context) void {
     const wrap = ui.div(c).column().wFull().gap(6);
     defer wrap.end();

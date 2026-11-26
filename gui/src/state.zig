@@ -151,6 +151,109 @@ pub const nav = [_]Page{
     .hardware, .service,  .update, .doctor,
 };
 
+/// The boards the configuration page is divided into.
+///
+/// The page used to stack every section in one scroll — thirteen cards, with a
+/// JSON tree under them — so finding "the temperature" meant scrolling past
+/// everything else and knowing it lived under Model. A board is one concern,
+/// and the page shows one at a time.
+pub const ConfigBoard = enum {
+    model,
+    agent,
+    autonomy,
+    workspace,
+    memory,
+    server,
+    execution,
+    gateway,
+    mcp,
+    schedules,
+    reliability,
+    diagnostics,
+    extras,
+    advanced,
+
+    pub fn label(self: ConfigBoard) []const u8 {
+        return switch (self) {
+            .model => "Model",
+            .agent => "Agent",
+            .autonomy => "Autonomy",
+            .workspace => "Workspace",
+            .memory => "Memory",
+            .server => "Runtime server",
+            .execution => "Runtime",
+            .gateway => "Gateway",
+            .mcp => "MCP servers",
+            .schedules => "Schedules",
+            .reliability => "Reliability",
+            .diagnostics => "Diagnostics",
+            .extras => "Skills & capabilities",
+            .advanced => "Advanced",
+        };
+    }
+
+    /// What the board is for, in the sentence the page opens with.
+    pub fn note(self: ConfigBoard) []const u8 {
+        return switch (self) {
+            .model => "Which model answers, and how it is asked.",
+            .agent => "How one turn runs: how far it may go, and how much it remembers.",
+            .autonomy => "What the agent may do without asking.",
+            .workspace => "The directory the agent may read and write.",
+            .memory => "Which engine stores turns, and whether it searches by meaning.",
+            .server => "The HTTP gateway this window serves in-process, for other clients. Chat and the pages are answered directly, not through it.",
+            .execution => "Where the agent's commands run.",
+            .gateway => "The HTTP server this window serves for other clients.",
+            .mcp => "One per line: `name command`. The agent can call these.",
+            .schedules => "Whether tasks run on a timer, and how many at once.",
+            .reliability => "How hard a failing provider call is retried.",
+            .diagnostics => "What the runtime records while it works.",
+            .extras => "Installed skills, and what this build has. The lists live on their own pages.",
+            .advanced => "Set any dotted path in the file directly.",
+        };
+    }
+
+    /// The rail's icon. Every name here is one the toolkit can draw; the test
+    /// that holds every icon in the view to the toolkit's table covers them.
+    pub fn icon(self: ConfigBoard) []const u8 {
+        return switch (self) {
+            .model => "cpu",
+            .agent => "sparkles",
+            .autonomy => "lock",
+            .workspace => "folder",
+            .memory => "brain",
+            .server => "globe",
+            .execution => "memorychip",
+            .gateway => "network",
+            .mcp => "wrench.and.screwdriver",
+            .schedules => "arrow.clockwise",
+            .reliability => "waveform.path.ecg",
+            .diagnostics => "gauge.with.dots.needle.33percent",
+            .extras => "checklist",
+            .advanced => "equal.square",
+        };
+    }
+
+    /// The words the settings search accepts for this board, beyond its label.
+    pub fn keywords(self: ConfigBoard) []const u8 {
+        return switch (self) {
+            .model => "model provider api key base url temperature reasoning effort",
+            .agent => "agent iterations history compact timezone timeout",
+            .autonomy => "autonomy approval workspace rate limit risk",
+            .workspace => "workspace directory path",
+            .memory => "memory engine backend search embedding",
+            .server => "server runtime gateway port bind pairing",
+            .execution => "runtime docker container image native",
+            .gateway => "gateway host port pairing public bind",
+            .mcp => "mcp servers protocol command",
+            .schedules => "cron scheduler tasks timer interval",
+            .reliability => "retries backoff reliability",
+            .diagnostics => "diagnostics log tool calls llm io",
+            .extras => "skills capabilities build",
+            .advanced => "advanced dotted path raw value",
+        };
+    }
+};
+
 /// A heading and the pages under it in the settings menu. When the settings
 /// button is pressed the sidebar swaps its conversation list for this menu, so
 /// the settings read as a section of the window rather than as a popover hung
@@ -441,7 +544,9 @@ pub const AppState = struct {
     cfg_log_tool_calls: bool = false,
     cfg_log_llm_io: bool = false,
 
-    show_advanced_config: bool = false,
+    /// Which board the configuration page is showing. The page is divided
+    /// into one board per concern rather than one scroll of every section.
+    cfg_board: ConfigBoard = .model,
 
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
