@@ -994,6 +994,9 @@ fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
         .schedules => schedulesBoard(s, c),
         .reliability => reliabilityBoard(s, c),
         .diagnostics => diagnosticsBoard(s, c),
+        .security => securityBoard(s, c),
+        .tools => toolsBoard(s, c),
+        .session => sessionBoard(s, c),
         .advanced => advancedBoard(s, c),
     }
 }
@@ -1405,6 +1408,69 @@ fn diagnosticsBoard(s: *AppState, c: *ui.Context) void {
     settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
     settingsRule(c, s);
     settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
+}
+
+/// What contains a command, what it may use, and what is kept of it. The
+/// backend select is the one control here whose value the runtime reads at
+/// startup, so the note says that a save needs the restart the bar offers.
+fn securityBoard(s: *AppState, c: *ui.Context) void {
+    {
+        // A select whose value is never "unset": the index always names a
+        // backend, and `auto` is the one the runtime falls back to.
+        var picked: ?usize = s.cfg_sandbox_backend;
+        settingsSelect(s, c, "sandbox-backend", "Sandbox", "`security.sandbox.backend`: what contains a shell command. `auto` picks the best the machine has.", &state.sandbox_backends, &picked, "auto");
+        if (picked) |i| s.cfg_sandbox_backend = i;
+    }
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Memory monitoring", "`security.resources.memory_monitoring`: watch a command's memory while it runs.", &s.cfg_memory_monitoring);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Memory limit", "`security.resources.max_memory_mb`: the ceiling one command may reach.", "512", &s.cfg_max_memory_mb);
+    settingsRule(c, s);
+    settingsTextField(s, c, "CPU seconds", "`security.resources.max_cpu_time_seconds`: how long it may compute.", "60", &s.cfg_max_cpu_seconds);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Subprocesses", "`security.resources.max_subprocesses`: how many children it may make.", "10", &s.cfg_max_subprocesses);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Audit log", "`security.audit.enabled`: keep a record of what was run.", &s.cfg_audit_enabled);
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "Audit path", "`security.audit.log_path`: where the record is written.", "audit.log", &s.cfg_audit_log_path);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Audit size limit", "`security.audit.max_size_mb`: the point at which the record is rotated.", "100", &s.cfg_audit_max_size_mb);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Sign audit events", "`security.audit.sign_events`: a keyed signature on every entry.", &s.cfg_audit_sign_events);
+}
+
+/// The limits one tool call is held to: how long a shell may run, how much it
+/// may print, and how much a file or a page may cost.
+fn toolsBoard(s: *AppState, c: *ui.Context) void {
+    settingsTextField(s, c, "Shell timeout", "`tools.shell_timeout_secs`: how long one command may run.", "60", &s.cfg_shell_timeout_secs);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Shell output limit", "`tools.shell_max_output_bytes`: the most one command may print.", "1048576", &s.cfg_shell_max_output_bytes);
+    settingsRule(c, s);
+    settingsTextField(s, c, "File size limit", "`tools.max_file_size_bytes`: the largest file the agent may read or write.", "10485760", &s.cfg_max_file_size_bytes);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Web page limit", "`tools.web_fetch_max_chars`: how much of a fetched page is kept.", "100000", &s.cfg_web_fetch_max_chars);
+}
+
+/// How a direct message is keyed to a conversation, how long one lives, and
+/// how work on it is claimed.
+fn sessionBoard(s: *AppState, c: *ui.Context) void {
+    {
+        // The four scopes are the runtime's own; the note says what the
+        // difference between them turns into.
+        var picked: usize = s.cfg_dm_scope;
+        settingsSegmented(s, c, "Direct message scope", "`session.dm_scope`: which conversations share a session.", &[_][]const u8{ "main", "per peer", "per channel", "per account" }, &picked);
+        s.cfg_dm_scope = picked;
+    }
+    settingsRule(c, s);
+    settingsTextField(s, c, "Idle timeout", "`session.idle_minutes`: how long a session waits before it is put away.", "60", &s.cfg_session_idle_minutes);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Concurrent tasks", "`session.max_concurrent_tasks`: how many run in one session at once.", "4", &s.cfg_session_max_concurrent);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Claim attempts", "`session.claim_max_attempts`: tries at taking over an existing session.", "5", &s.cfg_claim_max_attempts);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Claim lockout", "`session.claim_lockout_secs`: how long a failed claim is held off.", "300", &s.cfg_claim_lockout_secs);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Typing interval", "`session.typing_interval_secs`: how often a channel is told the agent is working.", "5", &s.cfg_typing_interval_secs);
 }
 
 /// The dotted-path editor: the one place a key the boards do not cover can be

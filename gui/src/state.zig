@@ -33,6 +33,9 @@ pub const Page = enum {
     cfg_schedules,
     cfg_reliability,
     cfg_diagnostics,
+    cfg_security,
+    cfg_tools,
+    cfg_session,
     cfg_advanced,
     status,
     capabilities,
@@ -64,6 +67,9 @@ pub const Page = enum {
             .cfg_schedules => ConfigBoard.schedules.label(),
             .cfg_reliability => ConfigBoard.reliability.label(),
             .cfg_diagnostics => ConfigBoard.diagnostics.label(),
+            .cfg_security => ConfigBoard.security.label(),
+            .cfg_tools => ConfigBoard.tools.label(),
+            .cfg_session => ConfigBoard.session.label(),
             .cfg_advanced => ConfigBoard.advanced.label(),
             .status => "Status",
             .capabilities => "Capabilities",
@@ -100,6 +106,9 @@ pub const Page = enum {
             .cfg_schedules => ConfigBoard.schedules.icon(),
             .cfg_reliability => ConfigBoard.reliability.icon(),
             .cfg_diagnostics => ConfigBoard.diagnostics.icon(),
+            .cfg_security => ConfigBoard.security.icon(),
+            .cfg_tools => ConfigBoard.tools.icon(),
+            .cfg_session => ConfigBoard.session.icon(),
             .cfg_advanced => ConfigBoard.advanced.icon(),
             .status => "gauge.with.dots.needle.33percent",
             .capabilities => "checklist",
@@ -137,6 +146,9 @@ pub const Page = enum {
             .cfg_schedules,
             .cfg_reliability,
             .cfg_diagnostics,
+            .cfg_security,
+            .cfg_tools,
+            .cfg_session,
             .cfg_advanced,
             => null,
             .status => &.{"status"},
@@ -178,6 +190,9 @@ pub const Page = enum {
             .cfg_schedules => .schedules,
             .cfg_reliability => .reliability,
             .cfg_diagnostics => .diagnostics,
+            .cfg_security => .security,
+            .cfg_tools => .tools,
+            .cfg_session => .session,
             .cfg_advanced => .advanced,
             else => null,
         };
@@ -202,6 +217,9 @@ pub const Page = enum {
             .cfg_schedules,
             .cfg_reliability,
             .cfg_diagnostics,
+            .cfg_security,
+            .cfg_tools,
+            .cfg_session,
             .cfg_advanced,
             => false,
             else => true,
@@ -225,6 +243,9 @@ pub const Page = enum {
             .cfg_schedules => ConfigBoard.schedules.keywords(),
             .cfg_reliability => ConfigBoard.reliability.keywords(),
             .cfg_diagnostics => ConfigBoard.diagnostics.keywords(),
+            .cfg_security => ConfigBoard.security.keywords(),
+            .cfg_tools => ConfigBoard.tools.keywords(),
+            .cfg_session => ConfigBoard.session.keywords(),
             .cfg_advanced => ConfigBoard.advanced.keywords(),
             .status => "status health uptime",
             .capabilities => "capabilities channels tools memory engines",
@@ -250,10 +271,11 @@ pub const nav = [_]Page{
     .chat,            .cfg_model,    .cfg_workspace, .cfg_agent,
     .cfg_autonomy,    .cfg_memory,   .cfg_server,    .cfg_execution,
     .cfg_gateway,     .cfg_mcp,      .cfg_schedules, .cfg_reliability,
-    .cfg_diagnostics, .cfg_advanced, .status,        .capabilities,
-    .models,          .memory,       .skills,        .channels,
-    .cron,            .mcp,          .auth,          .workspace,
-    .hardware,        .service,      .update,        .doctor,
+    .cfg_diagnostics, .cfg_security, .cfg_tools,     .cfg_session,
+    .cfg_advanced,    .status,       .capabilities,  .models,
+    .memory,          .skills,       .channels,      .cron,
+    .mcp,             .auth,         .workspace,     .hardware,
+    .service,         .update,       .doctor,
 };
 
 /// The boards the configuration page is divided into.
@@ -275,6 +297,9 @@ pub const ConfigBoard = enum {
     schedules,
     reliability,
     diagnostics,
+    security,
+    tools,
+    session,
     advanced,
 
     pub fn label(self: ConfigBoard) []const u8 {
@@ -291,6 +316,9 @@ pub const ConfigBoard = enum {
             .schedules => "Schedules",
             .reliability => "Reliability",
             .diagnostics => "Diagnostics",
+            .security => "Security",
+            .tools => "Tools",
+            .session => "Sessions",
             .advanced => "Advanced",
         };
     }
@@ -310,6 +338,9 @@ pub const ConfigBoard = enum {
             .schedules => "Whether tasks run on a timer, and how many at once.",
             .reliability => "How hard a failing provider call is retried.",
             .diagnostics => "What the runtime records while it works.",
+            .security => "How a command is contained, what it may use, and what is kept of it.",
+            .tools => "The limits one tool call is held to.",
+            .session => "How conversations are keyed, how long they live, and how work is claimed.",
             .advanced => "Set any dotted path in the file directly.",
         };
     }
@@ -330,6 +361,13 @@ pub const ConfigBoard = enum {
             .schedules => "arrow.clockwise",
             .reliability => "waveform.path.ecg",
             .diagnostics => "gauge.with.dots.needle.33percent",
+            // A lock for what contains a command, a wrench for what runs it,
+            // and a person for the conversations it runs in. (The toolkit's
+            // table has no shield and no second person; the test that holds
+            // every icon to it caught both.)
+            .security => "lock",
+            .tools => "wrench.and.screwdriver",
+            .session => "person.fill",
             .advanced => "equal.square",
         };
     }
@@ -350,6 +388,9 @@ pub const ConfigBoard = enum {
             .schedules => .cfg_schedules,
             .reliability => .cfg_reliability,
             .diagnostics => .cfg_diagnostics,
+            .security => .cfg_security,
+            .tools => .cfg_tools,
+            .session => .cfg_session,
             .advanced => .cfg_advanced,
         };
     }
@@ -369,6 +410,9 @@ pub const ConfigBoard = enum {
             .schedules => "cron scheduler tasks timer interval",
             .reliability => "retries backoff reliability",
             .diagnostics => "diagnostics log tool calls llm io",
+            .security => "security sandbox landlock firejail bubblewrap docker resources audit memory cpu",
+            .tools => "tools shell timeout output file size web fetch limits",
+            .session => "session dm scope idle concurrent claim timeout typing conversations",
             .advanced => "advanced dotted path raw value",
         };
     }
@@ -391,7 +435,7 @@ pub const settings_groups = [_]SettingsGroup{
     // it answers.
     .{ .title = "Workspace", .pages = &.{ .cfg_model, .cfg_workspace, .cfg_agent, .cfg_autonomy, .cfg_memory, .skills } },
     .{ .title = "Runtime", .pages = &.{ .cfg_server, .cfg_execution, .cfg_gateway, .cfg_mcp, .cfg_schedules, .cfg_reliability, .cfg_diagnostics, .channels, .cron, .mcp, .status } },
-    .{ .title = "System", .pages = &.{ .models, .memory, .workspace, .capabilities, .cfg_advanced, .auth, .hardware, .service, .update, .doctor } },
+    .{ .title = "System", .pages = &.{ .cfg_security, .cfg_tools, .cfg_session, .models, .memory, .workspace, .capabilities, .cfg_advanced, .auth, .hardware, .service, .update, .doctor } },
 };
 
 /// Provider ids nullclaw's provider factory knows. Shown in the
@@ -422,6 +466,13 @@ pub const reasoning_efforts = [_][]const u8{ "low", "medium", "high" };
 
 /// `runtime.kind` values: the agent runs in this process, or in a container.
 pub const runtime_kinds = [_][]const u8{ "native", "docker" };
+
+/// `security.sandbox.backend`: what may contain a command, in the order the
+/// runtime's own detection prefers them.
+pub const sandbox_backends = [_][]const u8{ "auto", "landlock", "firejail", "bubblewrap", "docker", "none" };
+
+/// `session.dm_scope`: how a direct message is keyed to a conversation.
+pub const dm_scopes = [_][]const u8{ "main", "per_peer", "per_channel_peer", "per_account_channel_peer" };
 
 pub const memory_backends = [_][]const u8{
     "hybrid",
@@ -666,6 +717,36 @@ pub const AppState = struct {
     cfg_log_tool_calls: bool = false,
     cfg_log_llm_io: bool = false,
 
+    // ── Security: what contains a command, and what is kept of it ──────────
+    /// `security.sandbox.backend`: index into `sandbox_backends`.
+    cfg_sandbox_backend: usize = 0,
+    /// `security.sandbox.enabled`: null follows the backend's own answer, as
+    /// the runtime does when the key is absent.
+    cfg_sandbox_enabled: ?bool = null,
+    cfg_max_memory_mb: ui.TextBuffer = .{},
+    cfg_max_cpu_seconds: ui.TextBuffer = .{},
+    cfg_max_subprocesses: ui.TextBuffer = .{},
+    cfg_memory_monitoring: bool = true,
+    cfg_audit_enabled: bool = true,
+    cfg_audit_log_path: ui.TextBuffer = .{},
+    cfg_audit_max_size_mb: ui.TextBuffer = .{},
+    cfg_audit_sign_events: bool = false,
+
+    // ── Tools: the limits one call is held to ──────────────────────────────
+    cfg_shell_timeout_secs: ui.TextBuffer = .{},
+    cfg_shell_max_output_bytes: ui.TextBuffer = .{},
+    cfg_max_file_size_bytes: ui.TextBuffer = .{},
+    cfg_web_fetch_max_chars: ui.TextBuffer = .{},
+
+    // ── Sessions: how conversations are keyed and claimed ─────────────────
+    /// `session.dm_scope`: index into `dm_scopes`.
+    cfg_dm_scope: usize = 2,
+    cfg_session_idle_minutes: ui.TextBuffer = .{},
+    cfg_session_max_concurrent: ui.TextBuffer = .{},
+    cfg_claim_max_attempts: ui.TextBuffer = .{},
+    cfg_claim_lockout_secs: ui.TextBuffer = .{},
+    cfg_typing_interval_secs: ui.TextBuffer = .{},
+
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
     /// those pages have been opened.
@@ -811,6 +892,20 @@ pub const AppState = struct {
         self.cfg_workspace.deinit();
         self.cfg_cron_interval.deinit();
         self.cfg_mcp_servers.deinit();
+        self.cfg_max_memory_mb.deinit();
+        self.cfg_max_cpu_seconds.deinit();
+        self.cfg_max_subprocesses.deinit();
+        self.cfg_audit_log_path.deinit();
+        self.cfg_audit_max_size_mb.deinit();
+        self.cfg_shell_timeout_secs.deinit();
+        self.cfg_shell_max_output_bytes.deinit();
+        self.cfg_max_file_size_bytes.deinit();
+        self.cfg_web_fetch_max_chars.deinit();
+        self.cfg_session_idle_minutes.deinit();
+        self.cfg_session_max_concurrent.deinit();
+        self.cfg_claim_max_attempts.deinit();
+        self.cfg_claim_lockout_secs.deinit();
+        self.cfg_typing_interval_secs.deinit();
         self.clearJson();
         self.clearExpanded();
         self.json_expanded.deinit(self.gpa);
@@ -2113,6 +2208,49 @@ pub const AppState = struct {
         setBuf(&self.cfg_scheduler_max_tasks, doc.get("scheduler.max_tasks") orelse "64");
         self.cfg_log_tool_calls = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_tool_calls") orelse "false", "true");
         self.cfg_log_llm_io = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_llm_io") orelse "false", "true");
+
+        // Security: the backend is a name, so it becomes an index; a name the
+        // list does not know leaves the select on `auto`, which is what the
+        // runtime does with a backend it cannot build.
+        {
+            const name = doc.get("security.sandbox.backend") orelse "auto";
+            self.cfg_sandbox_backend = 0;
+            for (sandbox_backends, 0..) |known, i| {
+                if (std.ascii.eqlIgnoreCase(known, name)) self.cfg_sandbox_backend = i;
+            }
+            self.cfg_sandbox_enabled = if (doc.get("security.sandbox.enabled")) |v|
+                std.ascii.eqlIgnoreCase(v, "true")
+            else
+                null;
+        }
+        setBuf(&self.cfg_max_memory_mb, doc.get("security.resources.max_memory_mb") orelse "");
+        setBuf(&self.cfg_max_cpu_seconds, doc.get("security.resources.max_cpu_time_seconds") orelse "");
+        setBuf(&self.cfg_max_subprocesses, doc.get("security.resources.max_subprocesses") orelse "");
+        self.cfg_memory_monitoring = std.ascii.eqlIgnoreCase(doc.get("security.resources.memory_monitoring") orelse "true", "true");
+        self.cfg_audit_enabled = std.ascii.eqlIgnoreCase(doc.get("security.audit.enabled") orelse "true", "true");
+        setBuf(&self.cfg_audit_log_path, doc.get("security.audit.log_path") orelse "audit.log");
+        setBuf(&self.cfg_audit_max_size_mb, doc.get("security.audit.max_size_mb") orelse "100");
+        self.cfg_audit_sign_events = std.ascii.eqlIgnoreCase(doc.get("security.audit.sign_events") orelse "false", "true");
+
+        // Tools.
+        setBuf(&self.cfg_shell_timeout_secs, doc.get("tools.shell_timeout_secs") orelse "60");
+        setBuf(&self.cfg_shell_max_output_bytes, doc.get("tools.shell_max_output_bytes") orelse "");
+        setBuf(&self.cfg_max_file_size_bytes, doc.get("tools.max_file_size_bytes") orelse "");
+        setBuf(&self.cfg_web_fetch_max_chars, doc.get("tools.web_fetch_max_chars") orelse "");
+
+        // Sessions.
+        {
+            const scope = doc.get("session.dm_scope") orelse "per_channel_peer";
+            self.cfg_dm_scope = 2;
+            for (dm_scopes, 0..) |known, i| {
+                if (std.ascii.eqlIgnoreCase(known, scope)) self.cfg_dm_scope = i;
+            }
+        }
+        setBuf(&self.cfg_session_idle_minutes, doc.get("session.idle_minutes") orelse "60");
+        setBuf(&self.cfg_session_max_concurrent, doc.get("session.max_concurrent_tasks") orelse "4");
+        setBuf(&self.cfg_claim_max_attempts, doc.get("session.claim_max_attempts") orelse "5");
+        setBuf(&self.cfg_claim_lockout_secs, doc.get("session.claim_lockout_secs") orelse "300");
+        setBuf(&self.cfg_typing_interval_secs, doc.get("session.typing_interval_secs") orelse "5");
     }
 
     /// MCP servers are objects, not a string, so the form shows them one per
@@ -2439,6 +2577,49 @@ pub const AppState = struct {
         Fields.text(doc, "scheduler.max_tasks", &self.cfg_scheduler_max_tasks, &changed);
         Fields.flag(doc, "diagnostics.log_tool_calls", self.cfg_log_tool_calls, false, &changed);
         Fields.flag(doc, "diagnostics.log_llm_io", self.cfg_log_llm_io, false, &changed);
+
+        // Security. `sandbox.enabled` is written only when it was asked for:
+        // the key being absent is the runtime's own "let the backend decide".
+        {
+            const want = if (self.cfg_sandbox_backend < sandbox_backends.len) sandbox_backends[self.cfg_sandbox_backend] else "auto";
+            const now = doc.get("security.sandbox.backend") orelse "";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("security.sandbox.backend", want) catch {};
+                changed = true;
+            }
+            if (self.cfg_sandbox_enabled) |on| {
+                Fields.flag(doc, "security.sandbox.enabled", on, false, &changed);
+            }
+        }
+        Fields.text(doc, "security.resources.max_memory_mb", &self.cfg_max_memory_mb, &changed);
+        Fields.text(doc, "security.resources.max_cpu_time_seconds", &self.cfg_max_cpu_seconds, &changed);
+        Fields.text(doc, "security.resources.max_subprocesses", &self.cfg_max_subprocesses, &changed);
+        Fields.flag(doc, "security.resources.memory_monitoring", self.cfg_memory_monitoring, true, &changed);
+        Fields.flag(doc, "security.audit.enabled", self.cfg_audit_enabled, true, &changed);
+        Fields.text(doc, "security.audit.log_path", &self.cfg_audit_log_path, &changed);
+        Fields.text(doc, "security.audit.max_size_mb", &self.cfg_audit_max_size_mb, &changed);
+        Fields.flag(doc, "security.audit.sign_events", self.cfg_audit_sign_events, false, &changed);
+
+        // Tools.
+        Fields.text(doc, "tools.shell_timeout_secs", &self.cfg_shell_timeout_secs, &changed);
+        Fields.text(doc, "tools.shell_max_output_bytes", &self.cfg_shell_max_output_bytes, &changed);
+        Fields.text(doc, "tools.max_file_size_bytes", &self.cfg_max_file_size_bytes, &changed);
+        Fields.text(doc, "tools.web_fetch_max_chars", &self.cfg_web_fetch_max_chars, &changed);
+
+        // Sessions.
+        {
+            const want = if (self.cfg_dm_scope < dm_scopes.len) dm_scopes[self.cfg_dm_scope] else "per_channel_peer";
+            const now = doc.get("session.dm_scope") orelse "";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("session.dm_scope", want) catch {};
+                changed = true;
+            }
+        }
+        Fields.text(doc, "session.idle_minutes", &self.cfg_session_idle_minutes, &changed);
+        Fields.text(doc, "session.max_concurrent_tasks", &self.cfg_session_max_concurrent, &changed);
+        Fields.text(doc, "session.claim_max_attempts", &self.cfg_claim_max_attempts, &changed);
+        Fields.text(doc, "session.claim_lockout_secs", &self.cfg_claim_lockout_secs, &changed);
+        Fields.text(doc, "session.typing_interval_secs", &self.cfg_typing_interval_secs, &changed);
 
         return changed;
     }

@@ -268,6 +268,11 @@ test "screenshots" {
     w.tester.resize(1180, 1500);
     w.tester.settle(0.5);
     try shoot(&w, "10-config-full");
+    // The System group's first board: what contains a command, and what is
+    // kept of it.
+    w.app.openPage(.cfg_security);
+    w.tester.settle(0.5);
+    try shoot(&w, "10b-config-security");
     w.tester.resize(1180, 800);
     w.app.openPage(.cfg_model);
     w.tester.settle(0.4);

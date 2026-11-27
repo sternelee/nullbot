@@ -2232,3 +2232,75 @@ test "a real-shaped config round-trips through save" {
     try testing.expect(std.mem.indexOf(u8, raw, "sqlite") != null);
     try testing.expect(std.mem.indexOf(u8, w.app.toast, "saved") != null);
 }
+
+// The System group is where the settings that contain a run live: what may
+// run a command, what it may use, and what is kept of it.
+test "the system boards read the file and write it back" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io,
+        \\{
+        \\  "agents": { "defaults": { "model": { "primary": "openrouter/stub-model" } } },
+        \\  "memory": { "backend": "none" },
+        \\  "security": {
+        \\    "sandbox": { "backend": "bubblewrap" },
+        \\    "resources": { "max_memory_mb": 256, "max_subprocesses": 7 },
+        \\    "audit": { "enabled": false }
+        \\  },
+        \\  "tools": { "shell_timeout_secs": 30 },
+        \\  "session": { "dm_scope": "per_peer", "idle_minutes": 15 }
+        \\}
+    );
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    // Security: the backend is a name in the file and an index in the form.
+    w.app.openPage(.cfg_security);
+    w.settle(2);
+    try testing.expect(w.tester.hasText("Sandbox"));
+    try testing.expect(w.tester.hasText("Memory limit"));
+    try testing.expectEqual(@as(usize, 3), w.app.cfg_sandbox_backend); // bubblewrap
+    try testing.expectEqualStrings("256", w.app.cfg_max_memory_mb.text());
+    try testing.expectEqualStrings("7", w.app.cfg_max_subprocesses.text());
+    try testing.expect(!w.app.cfg_audit_enabled);
+    // `memory_monitoring` is absent from the file, and absent means on.
+    try testing.expect(w.app.cfg_memory_monitoring);
+
+    // Tools.
+    w.app.openPage(.cfg_tools);
+    w.settle(1);
+    try testing.expect(w.tester.hasText("Shell timeout"));
+    try testing.expectEqualStrings("30", w.app.cfg_shell_timeout_secs.text());
+
+    // Sessions: the scope is an index too, and `per_peer` is the second.
+    w.app.openPage(.cfg_session);
+    w.settle(1);
+    try testing.expect(w.tester.hasText("Direct message scope"));
+    try testing.expectEqual(@as(usize, 1), w.app.cfg_dm_scope);
+    try testing.expectEqualStrings("15", w.app.cfg_session_idle_minutes.text());
+
+    // A change on one board is written by the bar, and leaves the others as
+    // the file had them.
+    w.app.openPage(.cfg_security);
+    w.settle(1);
+    w.app.cfg_max_memory_mb.set("1024");
+    w.app.cfg_audit_enabled = true;
+    try w.tester.clickText("Save & restart");
+    w.tester.settle(0.5);
+
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(64 << 10));
+    defer testing.allocator.free(raw);
+    if (std.mem.indexOf(u8, raw, "1024") == null) {
+        std.debug.print("\nDBGSYS file:\n{s}\ntoast: {s}\n", .{ raw, w.app.toast });
+    }
+    try testing.expect(std.mem.indexOf(u8, raw, "1024") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "bubblewrap") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "per_peer") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "shell_timeout_secs") != null);
+}
