@@ -26,7 +26,6 @@ const expects = [_]Expect{
     .{ .page = .status },
     .{ .page = .capabilities },
     .{ .page = .doctor },
-    .{ .page = .config, .set = "CONFIG_SUBCOMMANDS" },
     .{ .page = .models, .set = "MODELS_SUBCOMMANDS" },
     .{ .page = .memory, .set = "MEMORY_SUBCOMMANDS" },
     .{ .page = .skills, .set = "SKILLS_SUBCOMMANDS" },
@@ -230,9 +229,17 @@ test "the pages that ask for json are the ones the runtime prints json for" {
 test "the pages cover every command the runtime offers as a page" {
     // The nav is the feature list: every page the sidebar shows must be one
     // this file has checked, so a new page cannot slip in unverified.
-    try testing.expectEqual(state.nav.len, expects.len + 1); // + chat, which runs no command
+    // Every page either runs a command, is chat, or is a configuration board
+    // read from the file in process.
+    var boards: usize = 0;
     for (state.nav) |page| {
-        if (page == .chat) continue;
+        if (page.configBoard() != null) boards += 1;
+    }
+    try testing.expectEqual(state.nav.len, expects.len + 1 + boards); // + chat, which runs no command
+    for (state.nav) |page| {
+        // Chat runs nothing and a board is read from the file; neither has a
+        // command for this file to pin.
+        if (page == .chat or page.configBoard() != null) continue;
         var seen = false;
         for (expects) |expect| {
             if (expect.page == page) seen = true;

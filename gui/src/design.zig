@@ -43,13 +43,6 @@ pub const Spacing = struct {
     /// height, and the width a row's control is given.
     pub const settings_measure: f32 = 640;
 
-    /// The configuration page's measure: an area rail and one board beside it.
-    /// Wider than the settings measure by exactly the rail and its gap, so the
-    /// board's card is the same width as every other settings card.
-    pub const config_measure: f32 = 640 + 176 + 20;
-
-    /// The rail of areas down the configuration page's left side.
-    pub const config_rail: f32 = 176;
     pub const settings_row: f32 = 52;
     pub const settings_control: f32 = 240;
     /// Config label width

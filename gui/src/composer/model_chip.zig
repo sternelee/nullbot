@@ -39,5 +39,5 @@ pub fn render(s: *AppState, c: *ui.Context) void {
         .truncate = .ellipsis,
     });
     kit.tooltip(c, it, c.print("{s} · open Configuration", .{full}), .{});
-    if (it.clicked) s.openPage(.config);
+    if (it.clicked) s.openPage(.cfg_model);
 }

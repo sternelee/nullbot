@@ -99,7 +99,7 @@ the app runs:
 | `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
 | `02e-chat-headings.png` | Six heading ranks, and a long code block folded behind its count |
 | `02f-chat-quote-list-rule.png` | A quoted passage as one tinted block, a break, and a numbered list whose numbers share a gutter |
-| `03-config.png` | The configuration page: the board rail, the Model board, and the pinned action bar |
+| `03-config.png` | The Model board: the settings menu is the list of boards, and the action bar is pinned |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
 | `06-complaint.png` | A page when the runtime answers nothing: its complaint is on the page |
@@ -140,15 +140,16 @@ the runtime's slash commands, filtered by what follows. Up and Down move
 through the list, Return or Tab takes a candidate, Escape closes it, and
 taking one does not also send the message.
 
-The configuration page is a rail of boards and one board's card: Model, Agent,
-Autonomy, Workspace, Memory, Runtime server, Runtime, Gateway, MCP servers,
-Schedules, Reliability, Diagnostics, Skills & capabilities, and Advanced. One
-concern at a time, because the page used to be a single scroll of thirteen
-cards with a JSON tree under them — finding the temperature meant scrolling
-past everything else and knowing it lived under Model. The tree is gone: the
-boards read the file and set it, and Advanced keeps the one control the boards
-cannot offer, a dotted path typed by hand. Save & restart, Apply and Reload
-stay pinned under the rail.
+The configuration is not one page. Each board is a row of the settings menu —
+Model, Workspace, Agent, Autonomy, Memory, Runtime server, Runtime, Gateway, MCP
+servers, Schedules, Reliability, Diagnostics and Advanced — so the menu is the
+only list of them: a page with a second rail of decisions inside it was two
+menus for one choice. A board is one concern, its sentence, its card, and the
+pinned action bar (Save & restart, Apply and Reload); there is no raw JSON tree
+anywhere, because the boards read the file and set it, and a second
+unstructured copy of the same file answered the same question more slowly.
+Advanced keeps the one control the boards cannot offer: a dotted path typed by
+hand.
 
 The markdown an agent writes is drawn, not echoed: headings at six ranks (each a
 size, a weight and its own leading), lists (nested, numbered, and `- [x]`

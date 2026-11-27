@@ -18,7 +18,22 @@ pub const Io = std.Io;
 /// stays aligned with the runtime without a parser per feature.
 pub const Page = enum {
     chat,
-    config,
+    // The configuration boards. Each is a page in the settings menu, so the
+    // menu is the only list of them: the page used to be one entry with a
+    // second rail of boards inside it, which is two menus for one decision.
+    cfg_model,
+    cfg_agent,
+    cfg_autonomy,
+    cfg_workspace,
+    cfg_memory,
+    cfg_server,
+    cfg_execution,
+    cfg_gateway,
+    cfg_mcp,
+    cfg_schedules,
+    cfg_reliability,
+    cfg_diagnostics,
+    cfg_advanced,
     status,
     capabilities,
     models,
@@ -37,17 +52,29 @@ pub const Page = enum {
     pub fn label(self: Page) []const u8 {
         return switch (self) {
             .chat => "Chat",
-            .config => "Configuration",
+            .cfg_model => ConfigBoard.model.label(),
+            .cfg_agent => ConfigBoard.agent.label(),
+            .cfg_autonomy => ConfigBoard.autonomy.label(),
+            .cfg_workspace => ConfigBoard.workspace.label(),
+            .cfg_memory => ConfigBoard.memory.label(),
+            .cfg_server => ConfigBoard.server.label(),
+            .cfg_execution => ConfigBoard.execution.label(),
+            .cfg_gateway => ConfigBoard.gateway.label(),
+            .cfg_mcp => ConfigBoard.mcp.label(),
+            .cfg_schedules => ConfigBoard.schedules.label(),
+            .cfg_reliability => ConfigBoard.reliability.label(),
+            .cfg_diagnostics => ConfigBoard.diagnostics.label(),
+            .cfg_advanced => ConfigBoard.advanced.label(),
             .status => "Status",
             .capabilities => "Capabilities",
-            .models => "Models",
-            .memory => "Memory",
+            .models => "Model catalog",
+            .memory => "Memory stats",
             .skills => "Skills",
             .channels => "Channels",
-            .cron => "Cron",
-            .mcp => "MCP servers",
+            .cron => "Cron jobs",
+            .mcp => "MCP status",
             .auth => "Auth",
-            .workspace => "Workspace",
+            .workspace => "Workspace audit",
             .hardware => "Hardware",
             .service => "Service",
             .update => "Update",
@@ -61,7 +88,19 @@ pub const Page = enum {
         // page wears an icon the toolkit can draw` holds the list to that.
         return switch (self) {
             .chat => "text.cursor",
-            .config => "gearshape",
+            .cfg_model => ConfigBoard.model.icon(),
+            .cfg_agent => ConfigBoard.agent.icon(),
+            .cfg_autonomy => ConfigBoard.autonomy.icon(),
+            .cfg_workspace => ConfigBoard.workspace.icon(),
+            .cfg_memory => ConfigBoard.memory.icon(),
+            .cfg_server => ConfigBoard.server.icon(),
+            .cfg_execution => ConfigBoard.execution.icon(),
+            .cfg_gateway => ConfigBoard.gateway.icon(),
+            .cfg_mcp => ConfigBoard.mcp.icon(),
+            .cfg_schedules => ConfigBoard.schedules.icon(),
+            .cfg_reliability => ConfigBoard.reliability.icon(),
+            .cfg_diagnostics => ConfigBoard.diagnostics.icon(),
+            .cfg_advanced => ConfigBoard.advanced.icon(),
             .status => "gauge.with.dots.needle.33percent",
             .capabilities => "checklist",
             .models => "cpu",
@@ -84,7 +123,22 @@ pub const Page = enum {
     pub fn command(self: Page) ?[]const []const u8 {
         return switch (self) {
             .chat => null,
-            .config => &.{ "config", "show" },
+            // The boards are answered from the config file in process, so they
+            // spawn nothing.
+            .cfg_model,
+            .cfg_agent,
+            .cfg_autonomy,
+            .cfg_workspace,
+            .cfg_memory,
+            .cfg_server,
+            .cfg_execution,
+            .cfg_gateway,
+            .cfg_mcp,
+            .cfg_schedules,
+            .cfg_reliability,
+            .cfg_diagnostics,
+            .cfg_advanced,
+            => null,
             .status => &.{"status"},
             .capabilities => &.{"capabilities"},
             // `models list` prints prose; `models summary` is the one that
@@ -108,6 +162,27 @@ pub const Page = enum {
         };
     }
 
+    /// The board this page edits, when it edits one. The config file is read
+    /// for exactly these pages, and drawn by exactly these pages.
+    pub fn configBoard(self: Page) ?ConfigBoard {
+        return switch (self) {
+            .cfg_model => .model,
+            .cfg_agent => .agent,
+            .cfg_autonomy => .autonomy,
+            .cfg_workspace => .workspace,
+            .cfg_memory => .memory,
+            .cfg_server => .server,
+            .cfg_execution => .execution,
+            .cfg_gateway => .gateway,
+            .cfg_mcp => .mcp,
+            .cfg_schedules => .schedules,
+            .cfg_reliability => .reliability,
+            .cfg_diagnostics => .diagnostics,
+            .cfg_advanced => .advanced,
+            else => null,
+        };
+    }
+
     /// Whether the runtime documents `--json` for this page's command. The
     /// pages that do not get the runtime's prose shown instead — see
     /// view.jsonView's non-JSON branch. `contract.zig` checks this against the
@@ -115,6 +190,20 @@ pub const Page = enum {
     pub fn takesJson(self: Page) bool {
         return switch (self) {
             .chat, .auth, .hardware, .update, .service => false,
+            .cfg_model,
+            .cfg_agent,
+            .cfg_autonomy,
+            .cfg_workspace,
+            .cfg_memory,
+            .cfg_server,
+            .cfg_execution,
+            .cfg_gateway,
+            .cfg_mcp,
+            .cfg_schedules,
+            .cfg_reliability,
+            .cfg_diagnostics,
+            .cfg_advanced,
+            => false,
             else => true,
         };
     }
@@ -124,7 +213,19 @@ pub const Page = enum {
     pub fn keywords(self: Page) []const u8 {
         return switch (self) {
             .chat => "conversation message",
-            .config => "configuration settings provider model api key gateway workspace mcp cron skills",
+            .cfg_model => ConfigBoard.model.keywords(),
+            .cfg_agent => ConfigBoard.agent.keywords(),
+            .cfg_autonomy => ConfigBoard.autonomy.keywords(),
+            .cfg_workspace => ConfigBoard.workspace.keywords(),
+            .cfg_memory => ConfigBoard.memory.keywords(),
+            .cfg_server => ConfigBoard.server.keywords(),
+            .cfg_execution => ConfigBoard.execution.keywords(),
+            .cfg_gateway => ConfigBoard.gateway.keywords(),
+            .cfg_mcp => ConfigBoard.mcp.keywords(),
+            .cfg_schedules => ConfigBoard.schedules.keywords(),
+            .cfg_reliability => ConfigBoard.reliability.keywords(),
+            .cfg_diagnostics => ConfigBoard.diagnostics.keywords(),
+            .cfg_advanced => ConfigBoard.advanced.keywords(),
             .status => "status health uptime",
             .capabilities => "capabilities channels tools memory engines",
             .models => "models provider model summary",
@@ -146,9 +247,13 @@ pub const Page = enum {
 /// Every page, in order. The brand menu lists all but chat; the rail and the
 /// mode tabs open the two that matter most.
 pub const nav = [_]Page{
-    .chat,     .config,   .status, .capabilities, .models, .memory,
-    .skills,   .channels, .cron,   .mcp,          .auth,   .workspace,
-    .hardware, .service,  .update, .doctor,
+    .chat,            .cfg_model,    .cfg_workspace, .cfg_agent,
+    .cfg_autonomy,    .cfg_memory,   .cfg_server,    .cfg_execution,
+    .cfg_gateway,     .cfg_mcp,      .cfg_schedules, .cfg_reliability,
+    .cfg_diagnostics, .cfg_advanced, .status,        .capabilities,
+    .models,          .memory,       .skills,        .channels,
+    .cron,            .mcp,          .auth,          .workspace,
+    .hardware,        .service,      .update,        .doctor,
 };
 
 /// The boards the configuration page is divided into.
@@ -170,7 +275,6 @@ pub const ConfigBoard = enum {
     schedules,
     reliability,
     diagnostics,
-    extras,
     advanced,
 
     pub fn label(self: ConfigBoard) []const u8 {
@@ -178,8 +282,8 @@ pub const ConfigBoard = enum {
             .model => "Model",
             .agent => "Agent",
             .autonomy => "Autonomy",
-            .workspace => "Workspace",
-            .memory => "Memory",
+            .workspace => "Workspace audit",
+            .memory => "Memory stats",
             .server => "Runtime server",
             .execution => "Runtime",
             .gateway => "Gateway",
@@ -187,7 +291,6 @@ pub const ConfigBoard = enum {
             .schedules => "Schedules",
             .reliability => "Reliability",
             .diagnostics => "Diagnostics",
-            .extras => "Skills & capabilities",
             .advanced => "Advanced",
         };
     }
@@ -207,7 +310,6 @@ pub const ConfigBoard = enum {
             .schedules => "Whether tasks run on a timer, and how many at once.",
             .reliability => "How hard a failing provider call is retried.",
             .diagnostics => "What the runtime records while it works.",
-            .extras => "Installed skills, and what this build has. The lists live on their own pages.",
             .advanced => "Set any dotted path in the file directly.",
         };
     }
@@ -228,7 +330,6 @@ pub const ConfigBoard = enum {
             .schedules => "arrow.clockwise",
             .reliability => "waveform.path.ecg",
             .diagnostics => "gauge.with.dots.needle.33percent",
-            .extras => "checklist",
             .advanced => "equal.square",
         };
     }
@@ -248,7 +349,6 @@ pub const ConfigBoard = enum {
             .schedules => "cron scheduler tasks timer interval",
             .reliability => "retries backoff reliability",
             .diagnostics => "diagnostics log tool calls llm io",
-            .extras => "skills capabilities build",
             .advanced => "advanced dotted path raw value",
         };
     }
@@ -267,9 +367,11 @@ pub const SettingsGroup = struct {
 /// Every page but chat appears here exactly once; a test holds it to that, so a
 /// new page cannot be added to `nav` and quietly left out of the menu.
 pub const settings_groups = [_]SettingsGroup{
-    .{ .title = "Workspace", .pages = &.{ .config, .workspace, .skills, .memory } },
-    .{ .title = "Runtime", .pages = &.{ .models, .capabilities, .channels, .mcp, .cron, .status } },
-    .{ .title = "System", .pages = &.{ .auth, .hardware, .service, .update, .doctor } },
+    // Every board is a row here: what the window may read and write, and how
+    // it answers.
+    .{ .title = "Workspace", .pages = &.{ .cfg_model, .cfg_workspace, .cfg_agent, .cfg_autonomy, .cfg_memory, .skills } },
+    .{ .title = "Runtime", .pages = &.{ .cfg_server, .cfg_execution, .cfg_gateway, .cfg_mcp, .cfg_schedules, .cfg_reliability, .cfg_diagnostics, .channels, .cron, .mcp, .status } },
+    .{ .title = "System", .pages = &.{ .models, .memory, .workspace, .capabilities, .cfg_advanced, .auth, .hardware, .service, .update, .doctor } },
 };
 
 /// Provider ids nullclaw's provider factory knows. Shown in the
@@ -543,10 +645,6 @@ pub const AppState = struct {
     /// `diagnostics.log_tool_calls` / `log_llm_io`: what the runtime records.
     cfg_log_tool_calls: bool = false,
     cfg_log_llm_io: bool = false,
-
-    /// Which board the configuration page is showing. The page is divided
-    /// into one board per concern rather than one scroll of every section.
-    cfg_board: ConfigBoard = .model,
 
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
@@ -1412,7 +1510,8 @@ pub const AppState = struct {
         if (self.settings_open) {
             self.openPage(.chat);
         } else {
-            self.openPage(.config);
+            // The first board, which is the one most settings start with.
+            self.openPage(.cfg_model);
         }
     }
 
@@ -1451,8 +1550,7 @@ pub const AppState = struct {
         self.dismissToast();
         switch (page) {
             .chat => {},
-            .config => self.loadConfig(),
-            else => self.runPage(),
+            else => if (page.configBoard() != null) self.loadConfig() else self.runPage(),
         }
     }
 
@@ -2405,9 +2503,9 @@ test "every page has a label, an icon and a command" {
         if (p.command()) |words| {
             try testing.expect(words.len > 0);
         } else {
-            // Chat is the only page that runs nothing: its conversation is the
-            // agent itself, not a command.
-            try testing.expect(p == .chat);
+            // Chat is the agent itself rather than a command, and a board is
+            // read from the config file in process.
+            try testing.expect(p == .chat or p.configBoard() != null);
         }
     }
 }
@@ -2424,7 +2522,6 @@ test "nav starts on chat and names the runtime pages" {
     try testing.expectEqualSlices([]const u8, &.{ "models", "summary" }, Page.models.command().?);
     try testing.expectEqualSlices([]const u8, &.{ "memory", "stats" }, Page.memory.command().?);
     try testing.expectEqualSlices([]const u8, &.{"doctor"}, Page.doctor.command().?);
-    try testing.expectEqualSlices([]const u8, &.{ "config", "show" }, Page.config.command().?);
     try testing.expectEqualSlices([]const u8, &.{ "update", "--check" }, Page.update.command().?);
     try testing.expect(Page.models.takesJson());
     try testing.expect(!Page.update.takesJson());

@@ -60,12 +60,12 @@ test "the settings button reaches the configuration page" {
     w.tester.settle(0.5);
     w.app.toggleSettings();
     w.tester.settle(0.5);
-    // The menu lists the non-chat pages; Configuration is the one the user
-    // asked to move behind a collapsible entry.
-    try testing.expect(w.tester.hasText("Configuration"));
-    try w.tester.clickText("Configuration");
+    // The menu lists the non-chat pages; the first board of the configuration
+    // stands where the old single entry did.
+    try testing.expect(w.tester.hasText("Model"));
+    try w.tester.clickText("Model");
     w.tester.settle(0.5);
-    try testing.expectEqual(state.Page.config, w.app.page);
+    try testing.expectEqual(state.Page.cfg_model, w.app.page);
     try testing.expect(w.app.settings_open);
 }
 
@@ -94,7 +94,7 @@ test "the settings button swaps the sidebar to the settings menu" {
     try testing.expect(w.tester.hasText("Channels"));
     try testing.expect(!w.tester.hasText("Search chats"));
     try testing.expect(!w.tester.hasText("Compact"));
-    try testing.expectEqual(state.Page.config, w.app.page);
+    try testing.expectEqual(state.Page.cfg_model, w.app.page);
 
     // The back button returns to the conversation.
     try w.tester.clickText("Back");
@@ -221,7 +221,7 @@ test "the mode switch is only on the conversation" {
     try testing.expect(w.tester.hasText("Work"));
 
     // Any settings page: the switch goes, the sidebar's menu takes over.
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.tester.settle(0.5);
     try testing.expect(!w.tester.hasText("Work"));
 
@@ -281,7 +281,7 @@ test "the sidebar starts work at its top and settings at its foot" {
     w.app.toggleSettings();
     w.tester.settle(0.4);
     try testing.expect(w.app.settings_open);
-    const config = w.tester.findText("Configuration") orelse return error.NoConfigRow;
+    const config = w.tester.findText("Model") orelse return error.NoBoardRow;
     try testing.expect(config.x < view.sidebar_width);
 }
 
@@ -303,7 +303,7 @@ test "the config page opens at its top after a scrolled transcript" {
     w.tester.settle(0.4);
     try testing.expect(w.tester.hasText("a long answer that also wraps across the column width"));
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.tester.settle(0.5);
 
     // The first board's first row is on screen, near the top: the page did not
@@ -333,6 +333,16 @@ test "the settings menu holds every page but chat exactly once" {
         }
     }
     try testing.expectEqual(state.nav.len - 1, n);
+    // Every board is a row of this menu, so the menu is the only list of them.
+    for (std.enums.values(state.ConfigBoard)) |board| {
+        var found = false;
+        for (state.settings_groups) |group| {
+            for (group.pages) |page| {
+                if (page.configBoard() == board) found = true;
+            }
+        }
+        try testing.expect(found);
+    }
     // And the menu's set is exactly `nav` minus chat, so no page is missing.
     for (state.nav) |page| {
         if (page == .chat) continue;
@@ -1133,24 +1143,19 @@ test "the config page draws its own controls" {
     try w.init();
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.tester.settle(0.5);
 
-    // The page is a rail of boards and one board's card. What used to be
-    // thirteen sections in one scroll is now fourteen decisions, one per
-    // board, and the raw JSON tree is gone entirely.
-    try testing.expect(w.tester.hasText("Configuration"));
-    // Every board is named in the rail...
-    for (std.enums.values(state.ConfigBoard)) |board| {
-        try testing.expect(w.tester.hasText(board.label()));
-    }
-    // ...and the board it opens on is the one that answers first.
+    // The page is one board: the menu is the list of them, so there is no
+    // second rail inside the page, and no raw JSON tree anywhere.
+    try testing.expect(w.tester.hasText("Model"));
     try testing.expect(w.tester.hasText("Provider"));
     try testing.expect(w.tester.hasText("Default model"));
     try testing.expect(w.tester.containsText("Reload"));
     try testing.expect(w.tester.containsText("Save & restart"));
     try testing.expect(w.tester.containsText("model.primary"));
-    // No JSON tree, and no fold that hides one.
+    // The other boards' rows are not on this page.
+    try testing.expect(!w.tester.hasText("Search by meaning"));
     try testing.expect(!w.tester.containsText("Show advanced"));
 }
 
@@ -1320,7 +1325,7 @@ test "every json page paints its rows below the toolbar" {
     var checked: usize = 0;
     for (state.nav) |page| {
         // Chat runs no command, and the config page has its own test.
-        if (page == .chat or page == .config) continue;
+        if (page == .chat or page.configBoard() != null) continue;
         if (!page.takesJson()) continue;
 
         w.app.openPage(page);
@@ -1505,7 +1510,7 @@ test "every data page answers without a runtime on disk" {
 
     var checked: usize = 0;
     for (state.nav) |page| {
-        if (page == .chat or page == .config) continue;
+        if (page == .chat or page.configBoard() != null) continue;
         if (!page.takesJson()) continue;
 
         w.app.openPage(page);
@@ -1620,7 +1625,7 @@ test "the config form writes what it was given to the file" {
     try w.initWith(.{ .runtime = stub });
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.settle(2);
     try testing.expect(w.app.config != null);
 
@@ -1676,7 +1681,7 @@ test "the settings page writes the agent, safety and runtime fields" {
     try w.initWith(.{ .runtime = stub });
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.settle(2);
     try testing.expect(w.app.config != null);
 
@@ -1744,7 +1749,7 @@ test "the config page paints the file it loaded" {
     try w.initWith(.{});
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.settle(2);
     try testing.expect(w.app.config != null);
     try testing.expectEqualStrings("openrouter/stub-model", w.app.config.?.get("agents.defaults.model.primary").?);
@@ -1753,9 +1758,9 @@ test "the config page paints the file it loaded" {
     // cannot lose the file.
     try testing.expect(w.app.toast.len == 0);
 
-    // The board the page opens on is Model, and its card carries the file's
-    // value in a field rather than in a tree of keys.
-    try testing.expectEqual(state.ConfigBoard.model, w.app.cfg_board);
+    // The page is the Model board, and its card carries the file's value in a
+    // field rather than in a tree of keys.
+    try testing.expectEqual(state.Page.cfg_model, w.app.page);
     try testing.expect(w.tester.hasText("Default model"));
     try testing.expect(w.tester.hasText("Temperature"));
     // The field holds the model, not the provider-qualified primary: the
@@ -1782,7 +1787,7 @@ test "the config page draws no JSON tree" {
     try w.initWith(.{});
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.settle(2);
 
     // No tree, and no tree toolbar: the boards read the file, they do not
@@ -1794,7 +1799,7 @@ test "the config page draws no JSON tree" {
     try testing.expect(!w.tester.containsText("{\"agents\""));
 
     // The dotted-path editor is still there, on the board that owns it.
-    w.app.cfg_board = .advanced;
+    w.app.openPage(.cfg_advanced);
     w.tester.settle(0.4);
     try testing.expect(w.tester.hasText("Set a dotted path directly (advanced)"));
     try testing.expect(!w.tester.containsText("{\"agents\""));
@@ -1815,7 +1820,7 @@ test "the configuration page shows one board at a time" {
     try w.initWith(.{});
     defer w.deinit();
 
-    w.app.openPage(.config);
+    w.app.openPage(.cfg_model);
     w.settle(2);
 
     // Every board is named in the rail.
@@ -1827,19 +1832,12 @@ test "the configuration page shows one board at a time" {
     try testing.expect(w.tester.hasText("Temperature"));
     try testing.expect(!w.tester.hasText("Search by meaning"));
 
-    // Picking another board in the rail swaps which card is drawn. The rail's
-    // own label is used, not "Memory", which is also a page in the sidebar.
+    // Another board is another page, opened from the menu beside it.
     try w.tester.clickText("Autonomy");
     w.tester.settle(0.4);
-    try testing.expectEqual(state.ConfigBoard.autonomy, w.app.cfg_board);
+    try testing.expectEqual(state.Page.cfg_autonomy, w.app.page);
     try testing.expect(w.tester.hasText("Block high-risk commands"));
     try testing.expect(!w.tester.hasText("Temperature"));
-
-    // The memory board is reached the same way, and shows its own switch.
-    w.app.cfg_board = .memory;
-    w.tester.settle(0.4);
-    try testing.expect(w.tester.hasText("Search by meaning"));
-    try testing.expect(!w.tester.hasText("Block high-risk commands"));
 
     // And the action bar is still there, still pinned: switching boards must
     // not take the page's one control away.
@@ -1908,7 +1906,7 @@ test "clicking the model chip survives the config it reloads" {
 
     try w.tester.clickText("stub-model");
     w.tester.settle(0.5);
-    try testing.expectEqual(state.Page.config, w.app.page);
+    try testing.expectEqual(state.Page.cfg_model, w.app.page);
 }
 
 // Regression: the in-process data pages called `Config.load`, which resolves

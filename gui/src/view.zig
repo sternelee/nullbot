@@ -496,8 +496,7 @@ fn body(s: *AppState, c: *ui.Context) void {
     header(s, c);
     switch (s.page) {
         .chat => chat(s, c),
-        .config => configPage(s, c),
-        else => jsonPage(s, c),
+        else => if (s.page.configBoard()) |board| configBoardPage(s, c, board) else jsonPage(s, c),
     }
     banner(s, c);
     diagnosticsPanel(s, c);
@@ -526,7 +525,7 @@ fn header(s: *AppState, c: *ui.Context) void {
     if (s.busy()) {
         ui.text(c, "working…", .{ .size = 11, .color = s.palette.accent });
     }
-    if (s.page == .config) {
+    if (s.page.configBoard() != null) {
         configStatusChip(s, c);
     } else if (s.page == .chat) {
         if (ui.button(c, "", .{ .variant = .ghost, .size = 13, .icon = "arrow.clockwise" }).clicked) {
@@ -555,7 +554,7 @@ fn modeTabs(s: *AppState, c: *ui.Context) void {
         .size = 12,
     }).clicked) {
         s.active_tab = .work;
-        s.openPage(.config);
+        s.openPage(.cfg_model);
     }
 }
 
@@ -566,7 +565,7 @@ fn subtitle(s: *AppState, c: *ui.Context) []const u8 {
         }
         return "a new conversation";
     }
-    if (s.page == .config) return "the runtime's own config.json";
+    if (s.page.configBoard() != null) return "the runtime's own config.json";
     if (s.page.command()) |words| {
         var line: []const u8 = "nullclaw";
         for (words) |word| {
@@ -934,87 +933,36 @@ fn jsonToolbar(s: *AppState, c: *ui.Context) void {
     }
 }
 
-fn configPage(s: *AppState, c: *ui.Context) void {
-    // The page is divided: an area rail down the left, the chosen board
-    // beside it, and the action bar pinned under both. It used to be one
-    // scroll of every section with a JSON tree beneath them, so finding "the
-    // temperature" meant scrolling past twelve cards and knowing it lived
-    // under Model.
-    //
-    // `hFull` on the outer column is what makes the pinned bar work: without
-    // it the column grows to its content, the scroller never has less room
-    // than it needs, and the bar ends up below the fold.
+/// A board of the configuration, as its own page. The settings menu is the
+/// list of boards, so the page is the board and nothing else: no second list
+/// of decisions inside the page.
+fn configBoardPage(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
+    // Two bands: the board scrolls, and the action bar is pinned under it.
+    // `hFull` on the outer column is what makes that work — without it the
+    // column grows to its content, the scroller never has less room than it
+    // needs, and the bar lands below the fold.
     const outer = ui.div(c).column().grow().minW(0).wFull().px(22).pt(16);
     defer outer.end();
 
-    // The two bands are closed before the bar is drawn. A `defer` here would
-    // leave them open for the rest of the function, the bar would be drawn
-    // inside the row, and the row would divide its height between the scroller
-    // and the bar — which is how the board ended up in a 24-point window.
+    // Both bands are closed before the bar is drawn: a `defer` here would
+    // leave them open, the bar would be drawn inside the scroller, and it
+    // would scroll away with the form instead of staying put.
     {
-        const bands = ui.div(c).row().grow().minW(0).wFull().gap(20);
-        defer bands.end();
-
-        configRail(s, c);
-
-        // The board's scroller. `clip` as well as `scrollY`: a scrolling box
-        // does not cut its content by itself, so the form would run on under
-        // the bar. Keyed so its offset is its own — it shares a structural
-        // position with the other pages' scrollers.
         ui.key(c, "config-scroll");
-        // `hFull` as well as `grow`: in a row a child's height is its own
-        // content's, so a growing column would be exactly as tall as the board
-        // and never scroll — and, with `clip`, would show only its first line.
+        // `hFull` as well as `grow`: in a column `grow` is the height, but the
+        // next reader of this line should not have to know that.
         const scroller = ui.div(c).column().grow().minW(0).wFull().hFull().scrollY().clip().pb(24);
         defer scroller.end();
 
         if (s.config == null) configMissingNotice(s, c);
-        configBoard(s, c, s.cfg_board);
+        configBoard(s, c, board);
     }
 
     configActions(s, c);
 }
 
-/// The rail of decisions down the page's left side: one row per board, the
-/// chosen one lit. A rail rather than tabs because fourteen labels do not fit
-/// across, and a vertical list is what a settings page reads as.
-fn configRail(s: *AppState, c: *ui.Context) void {
-    // `hFull` as well as a fixed width: a column with no height lets its rows
-    // lay out past the bottom of the window, and a clipped row is not a hit —
-    // the rail would be visible and unclickable.
-    const rail = ui.div(c).column().w(design.Spacing.config_rail)
-        .minW(design.Spacing.config_rail).hFull().scrollY().gap(1);
-    defer rail.end();
-
-    for (std.enums.values(state.ConfigBoard)) |board| {
-        const chosen = board == s.cfg_board;
-        const row = ui.pressable(c, .{
-            .direction = .row,
-            .width = .fill,
-            .gap = 9,
-            .padding = .xy(10, 7),
-            .radius = 7,
-            .align_items = .center,
-            // The chosen board sits on a raised surface: the same shape as an
-            // unpressed row, so the rail does not jump as the choice moves.
-            .background = if (chosen) s.palette.raised else null,
-        }, s.palette.hover);
-        defer ui.end(c);
-        ui.icon(c, board.icon(), .{
-            .size = 12,
-            .color = if (chosen) s.palette.accent else s.palette.muted,
-        });
-        ui.text(c, board.label(), .{
-            .size = 12.5,
-            .weight = if (chosen) .medium else .regular,
-            .color = if (chosen) s.palette.text else s.palette.muted,
-        });
-        if (row.clicked) s.cfg_board = board;
-    }
-}
-
-/// One board: its sentence, then its card. The rail names the board, so the
-/// heading here is the sentence that says what the board decides.
+/// One board: its sentence, then its card. The page's title names the board,
+/// so the heading here is the sentence that says what it decides.
 fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
     const column = ui.div(c).column().wFull().maxW(design.Spacing.settings_measure).gap(10);
     defer column.end();
@@ -1044,7 +992,6 @@ fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
         .schedules => schedulesBoard(s, c),
         .reliability => reliabilityBoard(s, c),
         .diagnostics => diagnosticsBoard(s, c),
-        .extras => extrasBoard(s, c),
         .advanced => advancedBoard(s, c),
     }
 }
@@ -1456,12 +1403,6 @@ fn diagnosticsBoard(s: *AppState, c: *ui.Context) void {
     settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
     settingsRule(c, s);
     settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
-}
-
-fn extrasBoard(s: *AppState, c: *ui.Context) void {
-    skillsSummary(s, c);
-    settingsRule(c, s);
-    capabilitiesSummary(s, c);
 }
 
 /// The dotted-path editor: the one place a key the boards do not cover can be
