@@ -2073,9 +2073,9 @@ test "a footnote reference is a badge in the accent colour" {
     try testing.expect(badge);
 }
 
-// One page holds every board as a header, and only the one you came for is
-// open: the shape of the configuration at a glance, one answer at a time.
-test "the configuration page opens one board and folds the rest" {
+// The menu is the list of boards, so a board's page is that board and nothing
+// else: no second list inside the page, folded or otherwise.
+test "a board's page is that board and no other" {
     if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
     var threaded: std.Io.Threaded = .init(testing.allocator, .{});
     defer threaded.deinit();
@@ -2090,47 +2090,17 @@ test "the configuration page opens one board and folds the rest" {
 
     w.app.openPage(.cfg_model);
     w.settle(2);
-
-    // The open board is the one the page was opened for, and its rows are
-    // drawn.
-    try testing.expectEqual(@as(?state.ConfigBoard, .model), w.app.cfg_open);
+    try testing.expectEqual(state.Page.cfg_model, w.app.page);
     try testing.expect(w.tester.hasText("Default model"));
     try testing.expect(w.tester.hasText("Temperature"));
-    // The other boards are headers only: their rows are not on the page.
+    // Another board's rows are not on this page, and neither is a header for
+    // it: the menu already lists every board.
     try testing.expect(!w.tester.hasText("Search by meaning"));
-    try testing.expect(!w.tester.hasText("Block high-risk commands"));
+    try testing.expect(!w.tester.hasText("Max tool iterations"));
 
-    // The page's own header, not the menu row of the same name: the menu is
-    // on the left of the window, the page to the right of it.
-    try clickInPage(&w, "Autonomy");
-    w.tester.settle(0.5);
-    try testing.expectEqual(@as(?state.ConfigBoard, .autonomy), w.app.cfg_open);
-    try testing.expectEqual(state.Page.cfg_autonomy, w.app.page);
-    try testing.expect(w.tester.hasText("Block high-risk commands"));
+    // Another board is another page, reached from the menu.
+    w.app.openPage(.cfg_memory);
+    w.settle(1);
+    try testing.expect(w.tester.hasText("Search by meaning"));
     try testing.expect(!w.tester.hasText("Temperature"));
-
-    // Pressing the open header folds it, and the page becomes the list of
-    // decisions with none of the answers.
-    try clickInPage(&w, "Autonomy");
-    w.tester.settle(0.5);
-    try testing.expectEqual(@as(?state.ConfigBoard, null), w.app.cfg_open);
-    try testing.expect(!w.tester.hasText("Block high-risk commands"));
-    // The headers are all still there, which is what makes the page readable
-    // with nothing open.
-    try testing.expect(w.tester.hasText("Default model") == false);
-    try testing.expect(w.tester.hasText("Advanced"));
-}
-
-/// Clicks the rightmost text `label` on the page: the settings menu is on the
-/// window's left and holds rows with the same names as the boards beside it.
-fn clickInPage(w: *Window, label: []const u8) !void {
-    var found: ?ui.Rect = null;
-    for (w.tester.ctx.nodes.items) |n| switch (n.content) {
-        .text => |t| if (std.mem.eql(u8, t.str, label)) {
-            if (found == null or n.rect.x > found.?.x) found = n.rect;
-        },
-        else => {},
-    };
-    const r = found orelse return error.TextNotFound;
-    w.tester.click(r.x + r.w / 2, r.y + r.h / 2);
 }

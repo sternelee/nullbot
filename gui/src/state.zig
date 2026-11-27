@@ -666,11 +666,6 @@ pub const AppState = struct {
     cfg_log_tool_calls: bool = false,
     cfg_log_llm_io: bool = false,
 
-    /// The board the configuration page has open. Opening a board's page opens
-    /// it; the page's other boards stay as headers, so the whole shape of the
-    /// configuration is visible while one question is answered.
-    cfg_open: ?ConfigBoard = null,
-
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
     /// those pages have been opened.
@@ -1593,10 +1588,7 @@ pub const AppState = struct {
         self.dismissToast();
         switch (page) {
             .chat => {},
-            else => if (page.configBoard()) |board| {
-                self.cfg_open = board;
-                self.loadConfig();
-            } else self.runPage(),
+            else => if (page.configBoard() != null) self.loadConfig() else self.runPage(),
         }
     }
 
