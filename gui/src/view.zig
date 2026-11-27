@@ -496,7 +496,7 @@ fn body(s: *AppState, c: *ui.Context) void {
     header(s, c);
     switch (s.page) {
         .chat => chat(s, c),
-        else => if (s.page.configBoard()) |board| configBoardPage(s, c, board) else jsonPage(s, c),
+        else => if (s.page.configBoard() != null) configBoardPage(s, c) else jsonPage(s, c),
     }
     banner(s, c);
     diagnosticsPanel(s, c);
@@ -933,11 +933,15 @@ fn jsonToolbar(s: *AppState, c: *ui.Context) void {
     }
 }
 
-/// A board of the configuration, as its own page. The settings menu is the
-/// list of boards, so the page is the board and nothing else: no second list
-/// of decisions inside the page.
-fn configBoardPage(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
-    // Two bands: the board scrolls, and the action bar is pinned under it.
+/// The configuration, as one page of collapsible boards.
+///
+/// Every board is a header here, and only the one you came for is open —
+/// which is the whole shape of the configuration at a glance, with one
+/// question answered at a time. The settings menu opens a board by opening
+/// its page; a header opens the same way, so the menu, the page's title and
+/// the open board never disagree.
+fn configBoardPage(s: *AppState, c: *ui.Context) void {
+    // Two bands: the boards scroll, and the action bar is pinned under them.
     // `hFull` on the outer column is what makes that work — without it the
     // column grows to its content, the scroller never has less room than it
     // needs, and the bar lands below the fold.
@@ -946,28 +950,78 @@ fn configBoardPage(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void 
 
     // Both bands are closed before the bar is drawn: a `defer` here would
     // leave them open, the bar would be drawn inside the scroller, and it
-    // would scroll away with the form instead of staying put.
+    // would scroll away with the boards instead of staying put.
     {
         ui.key(c, "config-scroll");
-        // `hFull` as well as `grow`: in a column `grow` is the height, but the
-        // next reader of this line should not have to know that.
         const scroller = ui.div(c).column().grow().minW(0).wFull().hFull().scrollY().clip().pb(24);
         defer scroller.end();
 
+        const column = ui.div(c).column().wFull().maxW(design.Spacing.settings_measure).gap(6);
+        defer column.end();
+
         if (s.config == null) configMissingNotice(s, c);
-        configBoard(s, c, board);
+
+        for (std.enums.values(state.ConfigBoard)) |board| {
+            boardSection(s, c, board, s.cfg_open == board);
+        }
     }
 
     configActions(s, c);
 }
 
-/// One board: its sentence, then its card. The page's title names the board,
-/// so the heading here is the sentence that says what it decides.
-fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
-    const column = ui.div(c).column().wFull().maxW(design.Spacing.settings_measure).gap(10);
-    defer column.end();
+/// One board on the page: a header, and — when it is the open one — its note
+/// and its card. A closed board is one row, so thirteen decisions still read
+/// as thirteen rows rather than as a wall of forms.
+fn boardSection(s: *AppState, c: *ui.Context, board: state.ConfigBoard, open: bool) void {
+    const section = ui.div(c).column().wFull().gap(10);
+    defer section.end();
+
+    const head = ui.pressable(c, .{
+        .direction = .row,
+        .width = .fill,
+        .gap = 10,
+        .padding = .xy(12, 9),
+        .radius = design.Radius.md,
+        .align_items = .center,
+        .background = if (open) s.palette.panel else null,
+    }, s.palette.hover);
+
+    ui.icon(c, board.icon(), .{
+        .size = 13,
+        .color = if (open) s.palette.accent else s.palette.muted,
+    });
+    ui.text(c, board.label(), .{
+        .size = 13,
+        .weight = if (open) .medium else .regular,
+        .color = if (open) s.palette.text else s.palette.muted,
+    });
+    ui.spacer(c);
+    // The chevron says what a press will do, not what the board is: a closed
+    // board offers to open, an open one offers to fold away.
+    ui.icon(c, if (open) "chevron.up" else "chevron.down", .{
+        .size = 10,
+        .color = s.palette.faint,
+    });
+    // Closed here rather than in a `defer`: a deferred end would leave the
+    // header open for the rest of the function, and the board's card would be
+    // drawn inside the header's row instead of under it.
+    ui.end(c);
+
+    if (head.clicked) {
+        if (open) {
+            // Closing leaves every board folded, which is a legitimate view of
+            // the page: the list of decisions and none of the answers.
+            s.cfg_open = null;
+        } else if (board.page()) |page| {
+            s.openPage(page);
+        }
+    }
+
+    if (!open) return;
 
     if (board.note().len > 0) {
+        const note = ui.div(c).column().wFull().px(12);
+        defer note.end();
         ui.text(c, board.note(), .{
             .size = 11.5,
             .color = s.palette.faint,
@@ -978,7 +1032,11 @@ fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
 
     const card = settingsCard(c, s);
     defer card.end();
+    boardBody(s, c, board);
+}
 
+/// A board's rows, inside the card the caller opened.
+fn boardBody(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
     switch (board) {
         .model => modelBoard(s, c),
         .agent => agentBoard(s, c),

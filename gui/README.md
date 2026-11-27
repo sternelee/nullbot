@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 176 tests, headless
+zig build test       # 177 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -99,14 +99,14 @@ the app runs:
 | `02d-chat-math-task-image.png` | An inline formula, a checklist with its boxes, and a picture from a path |
 | `02e-chat-headings.png` | Six heading ranks, and a long code block folded behind its count |
 | `02f-chat-quote-list-rule.png` | A quoted passage as one tinted block, a break, and a numbered list whose numbers share a gutter |
-| `03-config.png` | The Model board: the settings menu is the list of boards, and the action bar is pinned |
+| `03-config.png` | The boards folded: Model open, every other decision a header |
 | `04-models.png` | The models summary, one row per key |
 | `05-expanded.png` | The Status page's JSON tree with every key opened |
 | `06-complaint.png` | A page when the runtime answers nothing: its complaint is on the page |
 | `07-diagnostics.png` | The diagnostics panel over the chat: runtime, paths, session, theme |
 | `08-capabilities.png` | Capabilities as a list: channels, memory engines and tools, each with its state |
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
-| `10-config-full.png` | The Agent board in a tall window, so its whole card fits under the pinned bar |
+| `10-config-full.png` | The Agent board open in a tall window, the rest folded under it |
 | `11-workspace.png` | The workspace audit: findings grouped by severity, each with its rule and `path:line` |
 | `12-streaming.png` | An answer mid-flight: the bubble being written, the caret, and the composer offering to stop |
 
@@ -140,16 +140,16 @@ the runtime's slash commands, filtered by what follows. Up and Down move
 through the list, Return or Tab takes a candidate, Escape closes it, and
 taking one does not also send the message.
 
-The configuration is not one page. Each board is a row of the settings menu —
-Model, Workspace, Agent, Autonomy, Memory, Runtime server, Runtime, Gateway, MCP
-servers, Schedules, Reliability, Diagnostics and Advanced — so the menu is the
-only list of them: a page with a second rail of decisions inside it was two
-menus for one choice. A board is one concern, its sentence, its card, and the
-pinned action bar (Save & restart, Apply and Reload); there is no raw JSON tree
-anywhere, because the boards read the file and set it, and a second
-unstructured copy of the same file answered the same question more slowly.
-Advanced keeps the one control the boards cannot offer: a dotted path typed by
-hand.
+The configuration is a page of boards, folded. Every board is a header — Model,
+Workspace, Agent, Autonomy, Memory, Runtime server, Runtime, Gateway, MCP
+servers, Schedules, Reliability, Diagnostics, Advanced — and only the one you
+came for is open, so the whole shape of the configuration is visible while one
+question is answered. The settings menu opens a board by opening its page; a
+header opens the same way, and pressing the open header folds it, which leaves
+the list of decisions with none of the answers. There is no raw JSON tree
+anywhere: the boards read the file and set it. Advanced keeps the one control
+the boards cannot offer, a dotted path typed by hand. Save & restart, Apply and
+Reload stay pinned under the boards.
 
 The markdown an agent writes is drawn, not echoed: headings at six ranks (each a
 size, a weight and its own leading), lists (nested, numbered, and `- [x]`

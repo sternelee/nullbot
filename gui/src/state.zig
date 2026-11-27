@@ -282,8 +282,8 @@ pub const ConfigBoard = enum {
             .model => "Model",
             .agent => "Agent",
             .autonomy => "Autonomy",
-            .workspace => "Workspace audit",
-            .memory => "Memory stats",
+            .workspace => "Workspace",
+            .memory => "Memory",
             .server => "Runtime server",
             .execution => "Runtime",
             .gateway => "Gateway",
@@ -331,6 +331,26 @@ pub const ConfigBoard = enum {
             .reliability => "waveform.path.ecg",
             .diagnostics => "gauge.with.dots.needle.33percent",
             .advanced => "equal.square",
+        };
+    }
+
+    /// The page that opens this board, so a header and a row of the settings
+    /// menu reach it the same way.
+    pub fn page(self: ConfigBoard) ?Page {
+        return switch (self) {
+            .model => .cfg_model,
+            .agent => .cfg_agent,
+            .autonomy => .cfg_autonomy,
+            .workspace => .cfg_workspace,
+            .memory => .cfg_memory,
+            .server => .cfg_server,
+            .execution => .cfg_execution,
+            .gateway => .cfg_gateway,
+            .mcp => .cfg_mcp,
+            .schedules => .cfg_schedules,
+            .reliability => .cfg_reliability,
+            .diagnostics => .cfg_diagnostics,
+            .advanced => .cfg_advanced,
         };
     }
 
@@ -646,6 +666,11 @@ pub const AppState = struct {
     cfg_log_tool_calls: bool = false,
     cfg_log_llm_io: bool = false,
 
+    /// The board the configuration page has open. Opening a board's page opens
+    /// it; the page's other boards stay as headers, so the whole shape of the
+    /// configuration is visible while one question is answered.
+    cfg_open: ?ConfigBoard = null,
+
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
     /// those pages have been opened.
@@ -694,6 +719,11 @@ pub const AppState = struct {
     /// allocator hands the page back to the kernel. They are kept until the
     /// next frame opens, when no node can still point at them.
     retired: std.ArrayListUnmanaged([]u8) = .empty,
+    /// The same, for a list of strings retired as a whole: a config reload
+    /// replaces the provider options, and the frame that asked for it is still
+    /// holding the old ids. The ids go into `retired`; the array holding them
+    /// needs its own type to be freed correctly.
+    retired_lists: std.ArrayListUnmanaged([]const []const u8) = .empty,
 
     /// The requests whose command has not come back yet. They are freed here
     /// on shutdown so a window closed mid-command leaks nothing.
@@ -786,6 +816,7 @@ pub const AppState = struct {
         if (self.config) |*c| c.deinit();
         self.releaseRetired();
         self.retired.deinit(self.gpa);
+        self.retired_lists.deinit(self.gpa);
         self.gpa.free(self.toast);
         self.gpa.free(self.default_model);
         for (self.cfg_provider_options) |id| self.gpa.free(id);
@@ -1127,6 +1158,18 @@ pub const AppState = struct {
     fn releaseRetired(self: *AppState) void {
         for (self.retired.items) |bytes| self.gpa.free(bytes);
         self.retired.clearRetainingCapacity();
+        for (self.retired_lists.items) |list| self.gpa.free(list);
+        self.retired_lists.clearRetainingCapacity();
+    }
+
+    /// Retires the provider options a reload is about to replace: the strings
+    /// and the array that holds them, both freed at the next frame.
+    fn retireProviderOptions(self: *AppState) void {
+        for (self.cfg_provider_options) |id| self.retire(@constCast(id));
+        if (self.cfg_provider_options.len > 0) {
+            self.retired_lists.append(self.gpa, self.cfg_provider_options) catch {};
+        }
+        self.cfg_provider_options = &.{};
     }
 
     /// Called by the view: stamps the toast with the frame clock the first
@@ -1550,7 +1593,10 @@ pub const AppState = struct {
         self.dismissToast();
         switch (page) {
             .chat => {},
-            else => if (page.configBoard() != null) self.loadConfig() else self.runPage(),
+            else => if (page.configBoard()) |board| {
+                self.cfg_open = board;
+                self.loadConfig();
+            } else self.runPage(),
         }
     }
 
@@ -1944,14 +1990,11 @@ pub const AppState = struct {
         const options = self.buildProviderOptions(default_provider) catch {
             // Without room for the list, the select simply shows the known
             // ids; the config keeps its own value.
-            for (self.cfg_provider_options) |id| self.gpa.free(id);
-            self.gpa.free(self.cfg_provider_options);
-            self.cfg_provider_options = &.{};
+            self.retireProviderOptions();
             self.cfg_default_provider = 0;
             return;
         };
-        for (self.cfg_provider_options) |id| self.gpa.free(id);
-        self.gpa.free(self.cfg_provider_options);
+        self.retireProviderOptions();
         self.cfg_provider_options = options;
         self.cfg_default_provider = if (default_provider.len == 0) 0 else blk: {
             var found: usize = 0;
