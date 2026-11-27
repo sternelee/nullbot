@@ -179,6 +179,12 @@ pub fn requestShutdown() void {
 }
 
 /// Check if shutdown has been requested.
+/// Clears the request, so a new run starts without one. The caller does this
+/// before it spawns the run, never after.
+pub fn clearShutdown() void {
+    shutdown_requested.store(false, .release);
+}
+
 pub fn isShutdownRequested() bool {
     return shutdown_requested.load(.acquire);
 }
@@ -1593,7 +1599,10 @@ pub fn run(allocator: std.mem.Allocator, config: *const Config, host: []const u8
     try onboard.scaffoldWorkspaceForConfig(allocator, config, &onboard.ProjectContext{});
 
     health.markComponentOk("daemon");
-    shutdown_requested.store(false, .release);
+    // The shutdown flag is the caller's to clear before it spawns this run
+    // (see `Runtime.serveGateway`). Clearing it here would erase a stop that
+    // arrived between the spawn and this line, and the accept loop would run
+    // on with nobody waiting to join it.
     const has_supervised_channels = hasSupervisedChannels(config);
     const has_runtime_dependent_channels = channel_catalog.hasRuntimeDependentChannels(config);
 
@@ -3631,4 +3640,21 @@ test "markError records AddressInUse for gateway component" {
     try std.testing.expect(!state.components[0].?.running);
     try std.testing.expectEqual(@as(u64, 1), state.components[0].?.restart_count);
     try std.testing.expectEqualStrings("AddressInUse", state.components[0].?.last_error.?);
+}
+
+test "the shutdown flag is cleared by the caller before the loop starts" {
+    // The gateway thread used to clear the flag itself, at the top of `run` —
+    // after the thread was spawned. A stop asked for in between (Save &
+    // restart on a fresh gateway) was erased, and the accept loop ran on while
+    // `stopGateway` waited to join it, which is a window that freezes.
+    daemon_clear_for_test();
+    shutdown_requested.store(true, .release);
+    try std.testing.expect(isShutdownRequested());
+    clearShutdown();
+    try std.testing.expect(!isShutdownRequested());
+}
+
+/// The flag's starting state, restored so a test cannot leak into the next.
+fn daemon_clear_for_test() void {
+    clearShutdown();
 }

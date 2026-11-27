@@ -743,6 +743,12 @@ pub const AppState = struct {
         };
         self.loadTheme();
         self.loadDefaultModel();
+        // The gateway the window serves takes its port from the file, so the
+        // file is read before the runtime is built rather than when the first
+        // configuration board is opened. Without this the window bound 3000 at
+        // startup whatever `gateway.port` said, and only moved to the
+        // configured port when someone pressed Save.
+        self.seedDaemonForm();
         // Auto-enable the bundled runtime on startup (best effort). Building
         // the linked runtime also brings the gateway up (see `ensureLinked`),
         // so the window serves HTTP from the first frame. Tests drive the
@@ -908,12 +914,22 @@ pub const AppState = struct {
         const rt = self.linked orelse return;
         const host = self.configFormGatewayHost();
         const port = self.configFormGatewayPort();
+        // Silent on the frame path: `pump` calls this every frame, and a
+        // failure would stack a toast per frame. `restartDaemon` reports the
+        // outcome instead, once, for the person who asked for it.
         rt.serveGateway(host, port) catch {};
     }
 
     pub fn restartDaemon(self: *AppState) void {
         if (self.linked) |rt| rt.stopGateway();
         self.ensureDaemonRunning();
+        // A restart that did not come back is the one thing the person who
+        // pressed "Save & restart" has to be told: the file was written either
+        // way, and a gateway that stayed down is otherwise invisible until
+        // something else fails to reach it.
+        if (self.linked != null and !self.gatewayRunning()) {
+            self.say("saved, but the gateway did not come back");
+        }
     }
 
     /// Stops the linked runtime's gateway without restarting it.
@@ -1838,9 +1854,33 @@ pub const AppState = struct {
 
     // ---------------------------------------------------------------- config
 
+    /// Reads the two fields the gateway needs from the file, so the window
+    /// serves the port the config names from its first frame. The whole
+    /// document is loaded later, by the board that edits it.
+    fn seedDaemonForm(self: *AppState) void {
+        var doc = backend.ConfigDoc.load(self.gpa, self.io, self.paths.config) catch return;
+        defer doc.deinit();
+        if (doc.get("gateway.host")) |host| {
+            if (host.len > 0) setBuf(&self.cfg_gateway_host, host);
+        }
+        if (doc.get("gateway.port")) |port| {
+            if (port.len > 0) setBuf(&self.cfg_gateway_port, port);
+        }
+        if (doc.get("workspace")) |workspace| {
+            if (workspace.len > 0) setBuf(&self.cfg_workspace, workspace);
+        }
+    }
+
     pub fn loadConfig(self: *AppState) void {
         if (self.config_running) return;
         self.config_running = true;
+        // Cleared however this returns. The early return below — no file yet,
+        // or unreadable — used to leave the flag set, and every control on the
+        // page is disabled while it is: Save & restart and Apply greyed out,
+        // the status line reading "reading the file on disk…", and Reload
+        // stopped at this function's own guard. The page could not recover
+        // without restarting the window.
+        defer self.config_running = false;
         // The document is read from disk here; whether the runtime accepts it
         // is checked against the loaded config directly, not by spawning
         // `config validate`.
@@ -1866,17 +1906,14 @@ pub const AppState = struct {
         // shown as the page's complaint rather than a spawned command's
         // stderr.
         var cfg = yc.config.Config.loadFromPath(self.gpa, self.paths.config) catch {
-            self.config_running = false;
             self.loadConfigSummary();
             return;
         };
         defer cfg.deinit();
         cfg.validate() catch {
-            self.config_running = false;
             self.loadConfigSummary();
             return;
         };
-        self.config_running = false;
         self.loadConfigSummary();
     }
 
@@ -1950,7 +1987,7 @@ pub const AppState = struct {
     }
 
     /// The provider id the select is holding.
-    fn providerName(self: *const AppState) []const u8 {
+    pub fn providerName(self: *const AppState) []const u8 {
         if (self.cfg_default_provider >= self.cfg_provider_options.len) return "";
         return self.cfg_provider_options[self.cfg_default_provider];
     }

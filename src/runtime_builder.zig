@@ -256,6 +256,12 @@ pub const Runtime = struct {
             self.gateway_thread = null;
             self.gateway_failure = null;
         }
+        // The shutdown flag is cleared here, before the thread exists, and not
+        // in `daemon.run`: `run` would clear it *after* the thread was
+        // spawned, so a stop asked for in between — the window's Save &
+        // restart on a fresh gateway — was thrown away, and `stopGateway`'s
+        // join then waited on a loop that had never been told to stop.
+        daemon.clearShutdown();
         const args = try self.allocator.create(GatewayArgs);
         errdefer self.allocator.destroy(args);
         args.* = .{

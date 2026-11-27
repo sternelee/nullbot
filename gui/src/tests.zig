@@ -2104,3 +2104,131 @@ test "a board's page is that board and no other" {
     try testing.expect(w.tester.hasText("Search by meaning"));
     try testing.expect(!w.tester.hasText("Temperature"));
 }
+
+test "save and restart writes the file" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io, harness.page_config);
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.cfg_model);
+    w.settle(2);
+    try testing.expect(w.app.config != null);
+
+    // Type a different model, then press the button the page exists for.
+    w.app.cfg_default_model.set("glm-4.6");
+    w.tester.frame();
+    try testing.expect(w.tester.hasText("Save & restart"));
+    try w.tester.clickText("Save & restart");
+    w.tester.settle(1);
+
+    // The file on disk carries the new model, and the page says so.
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(64 << 10));
+    defer testing.allocator.free(raw);
+    if (std.mem.indexOf(u8, raw, "glm-4.6") == null) {
+        std.debug.print("\nDBGSV file: {s}\ntoast: {s}\n", .{ raw, w.app.toast });
+    }
+    try testing.expect(std.mem.indexOf(u8, raw, "glm-4.6") != null);
+    try testing.expect(std.mem.indexOf(u8, w.app.toast, "saved") != null);
+}
+
+// Regression: a missing or unreadable config left `config_running` set, and
+// every control on the page is disabled while it is — Save & restart, Apply,
+// and Reload too, because `loadConfig` returns at its own guard. The page could
+// not recover without restarting the window.
+test "a missing config leaves the page able to reload" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // Nothing on disk yet.
+    harness.removeConfig(io);
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.cfg_model);
+    w.settle(1);
+    try testing.expect(w.app.config == null);
+    // The flag is clear, so the page is not stuck pretending to read a file.
+    try testing.expect(!w.app.config_running);
+    try testing.expect(w.tester.hasText("Reload"));
+
+    // The runtime is set up while the window is open, and Reload picks it up.
+    _ = try harness.writeConfig(io, harness.page_config);
+    try w.tester.clickText("Reload");
+    w.tester.settle(0.5);
+
+    try testing.expect(!w.app.config_running);
+    try testing.expect(w.app.config != null);
+    try testing.expect(w.tester.hasText("Default model"));
+    try testing.expectEqualStrings("stub-model", w.app.cfg_default_model.text());
+
+    // And the page's controls are live again: the same press that was greyed
+    // out a moment ago now writes the file.
+    w.app.cfg_default_model.set("glm-4.6");
+    try w.tester.clickText("Save & restart");
+    w.tester.settle(0.5);
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(64 << 10));
+    defer testing.allocator.free(raw);
+    try testing.expect(std.mem.indexOf(u8, raw, "glm-4.6") != null);
+}
+
+// The shape a real config has: a provider that is a prefix of the model path,
+// a gateway port, and a workspace. A save has to leave that file saying what
+// it said, and what the form says.
+test "a real-shaped config round-trips through save" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const realish =
+        \\{
+        \\  "agents": { "defaults": { "model": { "primary": "zhipu/group/auto" } } },
+        \\  "gateway": { "port": 33001 },
+        \\  "workspace": "/tmp/scratch-workspace",
+        \\  "memory": { "backend": "sqlite" }
+        \\}
+    ;
+    _ = try harness.writeConfig(io, realish);
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.cfg_model);
+    w.settle(2);
+
+    // The provider is the first segment and the model is the rest: `group/auto`
+    // is a model path, not a provider.
+    try testing.expectEqualStrings("zhipu", w.app.providerName());
+    try testing.expectEqualStrings("group/auto", w.app.cfg_default_model.text());
+    try testing.expectEqualStrings("33001", w.app.cfg_gateway_port.text());
+
+    // Saving writes the same primary back, and leaves the keys the form does
+    // not show alone.
+    try w.tester.clickText("Save & restart");
+    w.tester.settle(0.5);
+
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(64 << 10));
+    defer testing.allocator.free(raw);
+    if (std.mem.indexOf(u8, raw, "zhipu/group/auto") == null) {
+        std.debug.print("\nDBGRT file after save:\n{s}\ntoast: {s}\n", .{ raw, w.app.toast });
+    }
+    try testing.expect(std.mem.indexOf(u8, raw, "zhipu/group/auto") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "/tmp/scratch-workspace") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "sqlite") != null);
+    try testing.expect(std.mem.indexOf(u8, w.app.toast, "saved") != null);
+}
