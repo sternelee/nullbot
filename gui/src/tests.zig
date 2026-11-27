@@ -1807,7 +1807,10 @@ test "the config page draws no JSON tree" {
     // The dotted-path editor is still there, on the board that owns it.
     w.app.openPage(.cfg_advanced);
     w.tester.settle(0.4);
-    try testing.expect(w.tester.hasText("Set a dotted path directly (advanced)"));
+    try testing.expect(w.tester.hasText("Set a dotted path directly"));
+    // The file's own keys are listed, so a path does not have to be typed
+    // from memory. This file has one.
+    try testing.expect(w.tester.hasText("agents"));
     try testing.expect(!w.tester.containsText("{\"agents\""));
 }
 
@@ -2303,4 +2306,98 @@ test "the system boards read the file and write it back" {
     try testing.expect(std.mem.indexOf(u8, raw, "bubblewrap") != null);
     try testing.expect(std.mem.indexOf(u8, raw, "per_peer") != null);
     try testing.expect(std.mem.indexOf(u8, raw, "shell_timeout_secs") != null);
+}
+
+// Logs and Hardware are the last two System boards: what is written down, and
+// the one device the agent may reach.
+test "the logs and hardware boards read and write their settings" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io,
+        \\{
+        \\  "agents": { "defaults": { "model": { "primary": "openrouter/stub-model" } } },
+        \\  "memory": { "backend": "none" },
+        \\  "diagnostics": { "log_message_receipts": true, "token_usage_ledger_window_hours": 48 },
+        \\  "hardware": { "enabled": true, "transport": "serial", "serial_port": "/dev/tty.usbmodem42" }
+        \\}
+    );
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    w.app.openPage(.cfg_logs);
+    w.settle(2);
+    try testing.expect(w.tester.hasText("Log receipts"));
+    try testing.expect(w.app.cfg_log_receipts);
+    try testing.expectEqualStrings("48", w.app.cfg_ledger_window_hours.text());
+
+    w.app.openPage(.hardware);
+    w.settle(1);
+    try testing.expect(w.tester.hasText("Transport"));
+    try testing.expect(w.app.cfg_hardware_enabled);
+    try testing.expectEqual(@as(usize, 1), w.app.cfg_hardware_transport); // serial
+    try testing.expectEqualStrings("/dev/tty.usbmodem42", w.app.cfg_hardware_serial_port.text());
+
+    // A change writes through, and the keys it did not touch are kept.
+    w.app.cfg_hardware_baud_rate.set("9600");
+    try w.tester.clickText("Save & restart");
+    w.tester.settle(0.5);
+
+    const raw = try std.Io.Dir.cwd().readFileAlloc(io, harness.test_home ++ "/.nullclaw/config.json", testing.allocator, .limited(64 << 10));
+    defer testing.allocator.free(raw);
+    if (std.mem.indexOf(u8, raw, "9600") == null) {
+        std.debug.print("\nDBGLOG file:\n{s}\ntoast: {s}\n", .{ raw, w.app.toast });
+    }
+    try testing.expect(std.mem.indexOf(u8, raw, "9600") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "/dev/tty.usbmodem42") != null);
+    try testing.expect(std.mem.indexOf(u8, raw, "log_message_receipts") != null);
+}
+
+// A read-only page is where state is read; the board that sets it is one press
+// away, rather than another word to find in the menu.
+test "a page that reads state hands over to the board that sets it" {
+    if (@import("builtin").os.tag == .windows) return error.SkipZigTest;
+    var threaded: std.Io.Threaded = .init(testing.allocator, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    _ = try harness.writeConfig(io, harness.page_config);
+    defer harness.removeConfig(io);
+
+    var w: Window = undefined;
+    try w.initWith(.{});
+    defer w.deinit();
+
+    // Memory stats → the Memory board.
+    w.app.openPage(.memory);
+    w.settle(2);
+    try testing.expect(w.tester.hasText("Edit settings"));
+    try w.tester.clickText("Edit settings");
+    w.tester.settle(0.5);
+    try testing.expectEqual(state.Page.cfg_memory, w.app.page);
+    try testing.expect(w.tester.hasText("Search by meaning"));
+
+    // Cron jobs → Schedules, and MCP status → MCP servers.
+    w.app.openPage(.cron);
+    w.settle(1);
+    try w.tester.clickText("Edit settings");
+    w.tester.settle(0.5);
+    try testing.expectEqual(state.Page.cfg_schedules, w.app.page);
+
+    w.app.openPage(.mcp);
+    w.settle(1);
+    try w.tester.clickText("Edit settings");
+    w.tester.settle(0.5);
+    try testing.expectEqual(state.Page.cfg_mcp, w.app.page);
+
+    // A page with no board of its own offers nothing to hand over to.
+    w.app.openPage(.capabilities);
+    w.settle(1);
+    try testing.expect(!w.tester.hasText("Edit settings"));
+    try testing.expect(w.tester.hasText("Run"));
 }

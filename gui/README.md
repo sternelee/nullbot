@@ -41,7 +41,7 @@ Both build with **Zig 0.17.0**.
 cd gui
 zig build            # builds zig-out/bin/nullclaw-gui
 zig build run        # builds and opens the window
-zig build test       # 181 tests, headless
+zig build test       # 183 tests, headless
 zig build shots      # renders the window's screens to /tmp/nullclaw-gui-shots
 ```
 
@@ -108,6 +108,9 @@ the app runs:
 | `09-empty.png` | A page whose command answered with nothing: what is missing, and the command that adds it |
 | `10-config-full.png` | The Agent board in a tall window, so its whole card fits under the pinned bar |
 | `10b-config-security.png` | The Security board: sandbox, resource ceilings and the audit record |
+| `10c-config-logs.png` | The Logs board: what is written down, and the token ledger |
+| `10d-config-hardware.png` | The Hardware board: transport, serial port, baud rate, probe target |
+| `10e-config-advanced.png` | The Advanced board: the file, its top-level keys, and the dotted-path editor |
 | `11-workspace.png` | The workspace audit: findings grouped by severity, each with its rule and `path:line` |
 | `12-streaming.png` | An answer mid-flight: the bubble being written, the caret, and the composer offering to stop |
 
@@ -143,8 +146,8 @@ taking one does not also send the message.
 
 The configuration is not one page. Each board is a row of the settings menu —
 Model, Workspace, Agent, Autonomy, Memory, Runtime server, Runtime, Gateway, MCP
-servers, Schedules, Reliability, Diagnostics, Security, Tools, Sessions and
-Advanced — so the menu is the
+servers, Schedules, Reliability, Diagnostics, Security, Tools, Sessions, Logs,
+Hardware and Advanced — so the menu is the
 only list of them: a page with a second list of decisions inside it, folded or
 otherwise, was two menus for one choice. A board's page is that board: its
 sentence, its card, and the pinned action bar (Save & restart, Apply and

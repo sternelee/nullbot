@@ -34,7 +34,6 @@ const expects = [_]Expect{
     .{ .page = .mcp, .set = "MCP_SUBCOMMANDS" },
     .{ .page = .auth, .set = "AUTH_SUBCOMMANDS" },
     .{ .page = .workspace, .set = "WORKSPACE_SUBCOMMANDS" },
-    .{ .page = .hardware, .set = "HARDWARE_SUBCOMMANDS" },
     .{ .page = .service, .set = "SERVICE_SUBCOMMANDS" },
     .{ .page = .update },
 };

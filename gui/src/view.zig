@@ -532,6 +532,13 @@ fn header(s: *AppState, c: *ui.Context) void {
             s.refreshSessions();
         }
     } else {
+        // A page that reads state hands over to the board that sets it: the
+        // same word in the menu should not be the only way to find it.
+        if (s.page.settingsPage()) |settings| {
+            if (ui.button(c, "Edit settings", .{ .variant = .ghost, .size = 12, .icon = "gearshape" }).clicked) {
+                s.openPage(settings);
+            }
+        }
         if (ui.button(c, "Run", .{ .variant = .primary, .size = 12, .icon = "play.fill" }).clicked) {
             s.runPage();
         }
@@ -997,6 +1004,8 @@ fn configBoard(s: *AppState, c: *ui.Context, board: state.ConfigBoard) void {
         .security => securityBoard(s, c),
         .tools => toolsBoard(s, c),
         .session => sessionBoard(s, c),
+        .logs => logsBoard(s, c),
+        .hardware => hardwareBoard(s, c),
         .advanced => advancedBoard(s, c),
     }
 }
@@ -1405,9 +1414,66 @@ fn reliabilityBoard(s: *AppState, c: *ui.Context) void {
 }
 
 fn diagnosticsBoard(s: *AppState, c: *ui.Context) void {
-    settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`.", &s.cfg_log_tool_calls);
+    {
+        var picked: ?usize = s.cfg_diagnostics_backend;
+        settingsSelect(s, c, "diagnostics-backend", "Recorder", "`diagnostics.backend`: what records what the runtime does. `none` records nothing, and the Logs board then has nothing to write to.", &state.diagnostics_backends, &picked, "none");
+        if (picked) |i| s.cfg_diagnostics_backend = i;
+    }
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "OTel endpoint", "`diagnostics.otel_endpoint`: where a `otel` recorder sends spans.", "https://otlp.example.com/v1/traces", &s.cfg_otel_endpoint);
+    settingsRule(c, s);
+    settingsTextField(s, c, "OTel service", "`diagnostics.otel_service_name`: the name the spans are filed under.", "nullclaw", &s.cfg_otel_service);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Error text limit", "`diagnostics.api_error_max_chars`: how much of a provider's error is kept.", "auto", &s.cfg_api_error_max_chars);
+    settingsRule(c, s);
+    {
+        // The flags themselves are on the Logs board, so this points there
+        // rather than showing a second copy of the same four switches.
+        const row = settingRow(s, c, "Log flags", "Tool calls, model traffic, receipts and payloads live on the Logs board.");
+        defer row.end();
+        if (ui.button(c, "Open Logs", .{ .variant = .ghost, .size = 11.5, .icon = "arrow.right" }).clicked) s.openPage(.cfg_logs);
+    }
+}
+
+/// What the log is, how much of it is kept, and how much of it the token
+/// ledger remembers. The backend that decides whether a log exists at all is
+/// on the Diagnostics board, because a log with no backend is not a log.
+fn logsBoard(s: *AppState, c: *ui.Context) void {
+    settingsSwitch(s, c, "Log tool calls", "`diagnostics.log_tool_calls`: every tool call and its result.", &s.cfg_log_tool_calls);
     settingsRule(c, s);
     settingsSwitch(s, c, "Log model traffic", "`diagnostics.log_llm_io`: prompts and replies, in the log.", &s.cfg_log_llm_io);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Log receipts", "`diagnostics.log_message_receipts`: that a message arrived, not what it said.", &s.cfg_log_receipts);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Log payloads", "`diagnostics.log_message_payloads`: what the message said. Turn it on knowingly.", &s.cfg_log_payloads);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Token ledger", "`diagnostics.token_usage_ledger_enabled`: count what each turn spends.", &s.cfg_ledger_enabled);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Ledger window", "`diagnostics.token_usage_ledger_window_hours`: how far back the counts go.", "24", &s.cfg_ledger_window_hours);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Ledger bytes", "`diagnostics.token_usage_ledger_max_bytes`: the most the ledger file may take.", "0", &s.cfg_ledger_max_bytes);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Ledger lines", "`diagnostics.token_usage_ledger_max_lines`: the most entries it may hold.", "0", &s.cfg_ledger_max_lines);
+}
+
+/// The one board the agent may talk to. A serial device or a probe target,
+/// and nothing else: the agent cannot reach a device this does not name.
+fn hardwareBoard(s: *AppState, c: *ui.Context) void {
+    settingsSwitch(s, c, "Hardware access", "`hardware.enabled`: let the agent talk to a board.", &s.cfg_hardware_enabled);
+    settingsRule(c, s);
+    {
+        var picked: ?usize = s.cfg_hardware_transport;
+        settingsSelect(s, c, "hardware-transport", "Transport", "`hardware.transport`: how the board is reached.", &state.hardware_transports, &picked, "none");
+        if (picked) |i| s.cfg_hardware_transport = i;
+    }
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "Serial port", "`hardware.serial_port`: the device node, e.g. `/dev/tty.usbmodem1101`.", "/dev/tty.usbmodem1101", &s.cfg_hardware_serial_port);
+    settingsRule(c, s);
+    settingsTextField(s, c, "Baud rate", "`hardware.baud_rate`: the speed of the serial line.", "115200", &s.cfg_hardware_baud_rate);
+    settingsRule(c, s);
+    settingsTextFieldWide(s, c, "Probe target", "`hardware.probe_target`: what `probe-rs` flashes, e.g. `stm32h7` or a chip name.", "stm32h7", &s.cfg_hardware_probe_target);
+    settingsRule(c, s);
+    settingsSwitch(s, c, "Workspace datasheets", "`hardware.workspace_datasheets`: let the agent read datasheets from the workspace.", &s.cfg_hardware_datasheets);
 }
 
 /// What contains a command, what it may use, and what is kept of it. The
@@ -1616,28 +1682,90 @@ fn configStatusLine(s: *AppState, c: *ui.Context) void {
 /// A clickable heading that hides the raw editor until asked for, instead
 /// of a bare switch that leaves the page's longest section always open.
 fn configEditor(s: *AppState, c: *ui.Context) void {
-    const wrap = ui.div(c).column().wFull().gap(6);
+    const wrap = ui.div(c).column().wFull().gap(8);
     defer wrap.end();
-    ui.text(c, "Set a dotted path directly (advanced)", .{ .size = 11.5, .color = s.palette.faint });
-    const editor = ui.div(c).row().wFull().gap(8).itemsCenter();
-    defer editor.end();
-    _ = ui.textField(c, &s.edit_path, .{
-        .placeholder = "default_model or gateway.host",
-        .width = .{ .px = 280 },
-        .size = 12.5,
-        .mono = true,
-        .color = s.palette.text,
-    });
-    _ = ui.textField(c, &s.edit_value, .{
-        .placeholder = "a value (true/false/numbers auto-typed)",
-        .width = .fill,
-        .size = 12.5,
-        .mono = true,
-        .color = s.palette.text,
-    });
-    if (ui.button(c, "Set path", .{ .size = 12, .icon = "equal.square" }).clicked) s.applyEdit();
-    if (ui.button(c, "", .{ .variant = .ghost, .icon = "xmark", .size = 12 }).clicked) {
-        s.edit_value.clear();
+
+    // The file itself, said plainly: which one, how big, and whether the
+    // runtime would take it. Advanced is where a key the boards do not cover
+    // is set, and the first thing to know is which file that lands in.
+    {
+        const row = ui.div(c).row().wFull().gap(8).itemsCenter().px(14).py(10);
+        defer row.end();
+        ui.icon(c, "doc.text", .{ .size = 11, .color = s.palette.faint });
+        ui.text(c, s.paths.config, .{
+            .size = 11.5,
+            .color = s.palette.muted,
+            .mono = true,
+            .truncate = .middle,
+        });
+        ui.spacer(c);
+        ui.textf(c, .{ .size = 11, .color = s.palette.faint, .tabular = true }, "{d} top-level keys", .{
+            if (s.config) |doc| if (doc.object()) |map| map.count() else 0 else 0,
+        });
+    }
+
+    settingsRule(c, s);
+
+    // The keys the file has, one press away from the path field: a dotted path
+    // typed from memory is where this editor went wrong, and the list of what
+    // the file actually holds is the smallest thing that fixes it. A press
+    // fills the path; the value is typed beside it.
+    if (s.config) |*doc| {
+        if (doc.object()) |map| {
+            // A column of rows rather than one long row: nanoui has no
+            // wrapping row, and a row of twenty keys would run off the card.
+            const keys = ui.div(c).column().wFull().gap(4).px(14).py(10);
+            defer keys.end();
+            var it = map.iterator();
+            while (it.next()) |entry| {
+                const name = entry.key_ptr.*;
+                const row = ui.pressable(c, .{
+                    .direction = .row,
+                    .width = .fill,
+                    .gap = 8,
+                    .padding = .xy(8, 4),
+                    .radius = design.Radius.sm,
+                    .align_items = .center,
+                }, s.palette.hover);
+                defer ui.end(c);
+                ui.text(c, name, .{
+                    .size = 11.5,
+                    .color = s.palette.accent,
+                    .mono = true,
+                });
+                if (row.clicked) s.edit_path.set(name);
+            }
+        }
+    }
+
+    settingsRule(c, s);
+
+    {
+        const hint = ui.div(c).column().wFull().px(14).pt(10);
+        defer hint.end();
+        ui.text(c, "Set a dotted path directly", .{ .size = 11.5, .color = s.palette.faint });
+    }
+    {
+        const editor = ui.div(c).row().wFull().gap(8).itemsCenter().px(14).pb(12);
+        defer editor.end();
+        _ = ui.textField(c, &s.edit_path, .{
+            .placeholder = "default_model or gateway.host",
+            .width = .{ .px = 280 },
+            .size = 12.5,
+            .mono = true,
+            .color = s.palette.text,
+        });
+        _ = ui.textField(c, &s.edit_value, .{
+            .placeholder = "a value (true/false/numbers auto-typed)",
+            .width = .fill,
+            .size = 12.5,
+            .mono = true,
+            .color = s.palette.text,
+        });
+        if (ui.button(c, "Set path", .{ .size = 12, .icon = "equal.square" }).clicked) s.applyEdit();
+        if (ui.button(c, "", .{ .variant = .ghost, .icon = "xmark", .size = 12 }).clicked) {
+            s.edit_value.clear();
+        }
     }
 }
 

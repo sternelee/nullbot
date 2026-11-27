@@ -36,6 +36,7 @@ pub const Page = enum {
     cfg_security,
     cfg_tools,
     cfg_session,
+    cfg_logs,
     cfg_advanced,
     status,
     capabilities,
@@ -70,6 +71,7 @@ pub const Page = enum {
             .cfg_security => ConfigBoard.security.label(),
             .cfg_tools => ConfigBoard.tools.label(),
             .cfg_session => ConfigBoard.session.label(),
+            .cfg_logs => ConfigBoard.logs.label(),
             .cfg_advanced => ConfigBoard.advanced.label(),
             .status => "Status",
             .capabilities => "Capabilities",
@@ -109,6 +111,7 @@ pub const Page = enum {
             .cfg_security => ConfigBoard.security.icon(),
             .cfg_tools => ConfigBoard.tools.icon(),
             .cfg_session => ConfigBoard.session.icon(),
+            .cfg_logs => ConfigBoard.logs.icon(),
             .cfg_advanced => ConfigBoard.advanced.icon(),
             .status => "gauge.with.dots.needle.33percent",
             .capabilities => "checklist",
@@ -149,6 +152,8 @@ pub const Page = enum {
             .cfg_security,
             .cfg_tools,
             .cfg_session,
+            .cfg_logs,
+            .hardware,
             .cfg_advanced,
             => null,
             .status => &.{"status"},
@@ -165,7 +170,6 @@ pub const Page = enum {
             // runtime authenticates by OAuth (the other is weixin).
             .auth => &.{ "auth", "status", "openai-codex" },
             .workspace => &.{ "workspace", "audit" },
-            .hardware => &.{ "hardware", "scan" },
             // A check, not an install: `nullclaw update [--check] [--yes]`,
             // and it takes no `--json`.
             .update => &.{ "update", "--check" },
@@ -193,7 +197,27 @@ pub const Page = enum {
             .cfg_security => .security,
             .cfg_tools => .tools,
             .cfg_session => .session,
+            .cfg_logs => .logs,
+            // The hardware page is the board: it was a scan, and a scan of
+            // devices the config never turns on is not a setting.
+            .hardware => .hardware,
             .cfg_advanced => .advanced,
+            else => null,
+        };
+    }
+
+    /// The board that edits this page's concern, when one exists. A read-only
+    /// page is where the state is read; this is how it hands over to the
+    /// settings that produced it, instead of leaving the reader to find the
+    /// same word in the menu.
+    pub fn settingsPage(self: Page) ?Page {
+        return switch (self) {
+            .models => .cfg_model,
+            .memory => .cfg_memory,
+            .workspace => .cfg_workspace,
+            .mcp => .cfg_mcp,
+            .cron => .cfg_schedules,
+            .channels => null,
             else => null,
         };
     }
@@ -204,7 +228,7 @@ pub const Page = enum {
     /// runtime's own usage text.
     pub fn takesJson(self: Page) bool {
         return switch (self) {
-            .chat, .auth, .hardware, .update, .service => false,
+            .chat, .auth, .update, .service => false,
             .cfg_model,
             .cfg_agent,
             .cfg_autonomy,
@@ -220,6 +244,7 @@ pub const Page = enum {
             .cfg_security,
             .cfg_tools,
             .cfg_session,
+            .cfg_logs,
             .cfg_advanced,
             => false,
             else => true,
@@ -246,6 +271,7 @@ pub const Page = enum {
             .cfg_security => ConfigBoard.security.keywords(),
             .cfg_tools => ConfigBoard.tools.keywords(),
             .cfg_session => ConfigBoard.session.keywords(),
+            .cfg_logs => ConfigBoard.logs.keywords(),
             .cfg_advanced => ConfigBoard.advanced.keywords(),
             .status => "status health uptime",
             .capabilities => "capabilities channels tools memory engines",
@@ -272,10 +298,10 @@ pub const nav = [_]Page{
     .cfg_autonomy,    .cfg_memory,   .cfg_server,    .cfg_execution,
     .cfg_gateway,     .cfg_mcp,      .cfg_schedules, .cfg_reliability,
     .cfg_diagnostics, .cfg_security, .cfg_tools,     .cfg_session,
-    .cfg_advanced,    .status,       .capabilities,  .models,
-    .memory,          .skills,       .channels,      .cron,
-    .mcp,             .auth,         .workspace,     .hardware,
-    .service,         .update,       .doctor,
+    .cfg_logs,        .hardware,     .cfg_advanced,  .status,
+    .capabilities,    .models,       .memory,        .workspace,
+    .skills,          .channels,     .cron,          .mcp,
+    .auth,            .service,      .update,        .doctor,
 };
 
 /// The boards the configuration page is divided into.
@@ -300,6 +326,8 @@ pub const ConfigBoard = enum {
     security,
     tools,
     session,
+    logs,
+    hardware,
     advanced,
 
     pub fn label(self: ConfigBoard) []const u8 {
@@ -319,6 +347,8 @@ pub const ConfigBoard = enum {
             .security => "Security",
             .tools => "Tools",
             .session => "Sessions",
+            .logs => "Logs",
+            .hardware => "Hardware",
             .advanced => "Advanced",
         };
     }
@@ -341,6 +371,8 @@ pub const ConfigBoard = enum {
             .security => "How a command is contained, what it may use, and what is kept of it.",
             .tools => "The limits one tool call is held to.",
             .session => "How conversations are keyed, how long they live, and how work is claimed.",
+            .logs => "What is written down while the runtime works, and how much of it is kept.",
+            .hardware => "The board or serial device the agent may talk to, and nothing else.",
             .advanced => "Set any dotted path in the file directly.",
         };
     }
@@ -368,6 +400,8 @@ pub const ConfigBoard = enum {
             .security => "lock",
             .tools => "wrench.and.screwdriver",
             .session => "person.fill",
+            .logs => "doc.text",
+            .hardware => "memorychip",
             .advanced => "equal.square",
         };
     }
@@ -391,6 +425,8 @@ pub const ConfigBoard = enum {
             .security => .cfg_security,
             .tools => .cfg_tools,
             .session => .cfg_session,
+            .logs => .cfg_logs,
+            .hardware => .hardware,
             .advanced => .cfg_advanced,
         };
     }
@@ -413,6 +449,8 @@ pub const ConfigBoard = enum {
             .security => "security sandbox landlock firejail bubblewrap docker resources audit memory cpu",
             .tools => "tools shell timeout output file size web fetch limits",
             .session => "session dm scope idle concurrent claim timeout typing conversations",
+            .logs => "logs logging receipts payloads llm io ledger token usage",
+            .hardware => "hardware serial port baud rate probe target datasheet arduino stm32",
             .advanced => "advanced dotted path raw value",
         };
     }
@@ -435,7 +473,7 @@ pub const settings_groups = [_]SettingsGroup{
     // it answers.
     .{ .title = "Workspace", .pages = &.{ .cfg_model, .cfg_workspace, .cfg_agent, .cfg_autonomy, .cfg_memory, .skills } },
     .{ .title = "Runtime", .pages = &.{ .cfg_server, .cfg_execution, .cfg_gateway, .cfg_mcp, .cfg_schedules, .cfg_reliability, .cfg_diagnostics, .channels, .cron, .mcp, .status } },
-    .{ .title = "System", .pages = &.{ .cfg_security, .cfg_tools, .cfg_session, .models, .memory, .workspace, .capabilities, .cfg_advanced, .auth, .hardware, .service, .update, .doctor } },
+    .{ .title = "System", .pages = &.{ .cfg_security, .cfg_tools, .cfg_session, .cfg_logs, .hardware, .models, .memory, .workspace, .capabilities, .cfg_advanced, .auth, .service, .update, .doctor } },
 };
 
 /// Provider ids nullclaw's provider factory knows. Shown in the
@@ -472,6 +510,13 @@ pub const runtime_kinds = [_][]const u8{ "native", "docker" };
 pub const sandbox_backends = [_][]const u8{ "auto", "landlock", "firejail", "bubblewrap", "docker", "none" };
 
 /// `session.dm_scope`: how a direct message is keyed to a conversation.
+/// `diagnostics.backend`: what records what the runtime does. The names are
+/// the runtime's own (`none`/`noop`, `log`, `verbose`, `file`, `otel`).
+pub const diagnostics_backends = [_][]const u8{ "none", "log", "verbose", "file", "otel" };
+
+/// `hardware.transport`: how a board is reached.
+pub const hardware_transports = [_][]const u8{ "none", "serial", "probe" };
+
 pub const dm_scopes = [_][]const u8{ "main", "per_peer", "per_channel_peer", "per_account_channel_peer" };
 
 pub const memory_backends = [_][]const u8{
@@ -747,6 +792,29 @@ pub const AppState = struct {
     cfg_claim_lockout_secs: ui.TextBuffer = .{},
     cfg_typing_interval_secs: ui.TextBuffer = .{},
 
+    /// `diagnostics.backend`: index into `diagnostics_backends`.
+    cfg_diagnostics_backend: usize = 0,
+    cfg_otel_endpoint: ui.TextBuffer = .{},
+    cfg_otel_service: ui.TextBuffer = .{},
+    cfg_api_error_max_chars: ui.TextBuffer = .{},
+
+    // ── Logs: what is written down, and how much of it is kept ─────────────
+    cfg_log_receipts: bool = false,
+    cfg_log_payloads: bool = false,
+    cfg_ledger_enabled: bool = true,
+    cfg_ledger_window_hours: ui.TextBuffer = .{},
+    cfg_ledger_max_bytes: ui.TextBuffer = .{},
+    cfg_ledger_max_lines: ui.TextBuffer = .{},
+
+    // ── Hardware: the one device the agent may talk to ─────────────────────
+    cfg_hardware_enabled: bool = false,
+    /// `hardware.transport`: index into `hardware_transports`.
+    cfg_hardware_transport: usize = 0,
+    cfg_hardware_serial_port: ui.TextBuffer = .{},
+    cfg_hardware_baud_rate: ui.TextBuffer = .{},
+    cfg_hardware_probe_target: ui.TextBuffer = .{},
+    cfg_hardware_datasheets: bool = false,
+
     /// What the Skills and Capabilities pages last read, so the configuration
     /// page can summarise them without running the commands again. Null until
     /// those pages have been opened.
@@ -906,6 +974,15 @@ pub const AppState = struct {
         self.cfg_claim_max_attempts.deinit();
         self.cfg_claim_lockout_secs.deinit();
         self.cfg_typing_interval_secs.deinit();
+        self.cfg_otel_endpoint.deinit();
+        self.cfg_otel_service.deinit();
+        self.cfg_api_error_max_chars.deinit();
+        self.cfg_ledger_window_hours.deinit();
+        self.cfg_ledger_max_bytes.deinit();
+        self.cfg_ledger_max_lines.deinit();
+        self.cfg_hardware_serial_port.deinit();
+        self.cfg_hardware_baud_rate.deinit();
+        self.cfg_hardware_probe_target.deinit();
         self.clearJson();
         self.clearExpanded();
         self.json_expanded.deinit(self.gpa);
@@ -2251,6 +2328,41 @@ pub const AppState = struct {
         setBuf(&self.cfg_claim_max_attempts, doc.get("session.claim_max_attempts") orelse "5");
         setBuf(&self.cfg_claim_lockout_secs, doc.get("session.claim_lockout_secs") orelse "300");
         setBuf(&self.cfg_typing_interval_secs, doc.get("session.typing_interval_secs") orelse "5");
+
+        // Diagnostics: the backend that decides whether anything is recorded,
+        // and the OpenTelemetry endpoint it records to.
+        {
+            const name = doc.get("diagnostics.backend") orelse "none";
+            self.cfg_diagnostics_backend = 0;
+            for (diagnostics_backends, 0..) |known, i| {
+                if (std.ascii.eqlIgnoreCase(known, name)) self.cfg_diagnostics_backend = i;
+            }
+        }
+        setBuf(&self.cfg_otel_endpoint, doc.get("diagnostics.otel_endpoint") orelse "");
+        setBuf(&self.cfg_otel_service, doc.get("diagnostics.otel_service_name") orelse "nullclaw");
+        setBuf(&self.cfg_api_error_max_chars, doc.get("diagnostics.api_error_max_chars") orelse "");
+
+        // Logs.
+        self.cfg_log_receipts = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_message_receipts") orelse "false", "true");
+        self.cfg_log_payloads = std.ascii.eqlIgnoreCase(doc.get("diagnostics.log_message_payloads") orelse "false", "true");
+        self.cfg_ledger_enabled = std.ascii.eqlIgnoreCase(doc.get("diagnostics.token_usage_ledger_enabled") orelse "true", "true");
+        setBuf(&self.cfg_ledger_window_hours, doc.get("diagnostics.token_usage_ledger_window_hours") orelse "24");
+        setBuf(&self.cfg_ledger_max_bytes, doc.get("diagnostics.token_usage_ledger_max_bytes") orelse "0");
+        setBuf(&self.cfg_ledger_max_lines, doc.get("diagnostics.token_usage_ledger_max_lines") orelse "0");
+
+        // Hardware.
+        self.cfg_hardware_enabled = std.ascii.eqlIgnoreCase(doc.get("hardware.enabled") orelse "false", "true");
+        {
+            const name = doc.get("hardware.transport") orelse "none";
+            self.cfg_hardware_transport = 0;
+            for (hardware_transports, 0..) |known, i| {
+                if (std.ascii.eqlIgnoreCase(known, name)) self.cfg_hardware_transport = i;
+            }
+        }
+        setBuf(&self.cfg_hardware_serial_port, doc.get("hardware.serial_port") orelse "");
+        setBuf(&self.cfg_hardware_baud_rate, doc.get("hardware.baud_rate") orelse "115200");
+        setBuf(&self.cfg_hardware_probe_target, doc.get("hardware.probe_target") orelse "");
+        self.cfg_hardware_datasheets = std.ascii.eqlIgnoreCase(doc.get("hardware.workspace_datasheets") orelse "false", "true");
     }
 
     /// MCP servers are objects, not a string, so the form shows them one per
@@ -2620,6 +2732,45 @@ pub const AppState = struct {
         Fields.text(doc, "session.claim_max_attempts", &self.cfg_claim_max_attempts, &changed);
         Fields.text(doc, "session.claim_lockout_secs", &self.cfg_claim_lockout_secs, &changed);
         Fields.text(doc, "session.typing_interval_secs", &self.cfg_typing_interval_secs, &changed);
+
+        // Diagnostics.
+        {
+            const want = if (self.cfg_diagnostics_backend < diagnostics_backends.len)
+                diagnostics_backends[self.cfg_diagnostics_backend]
+            else
+                "none";
+            const now = doc.get("diagnostics.backend") orelse "";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("diagnostics.backend", want) catch {};
+                changed = true;
+            }
+        }
+        Fields.text(doc, "diagnostics.otel_endpoint", &self.cfg_otel_endpoint, &changed);
+        Fields.text(doc, "diagnostics.otel_service_name", &self.cfg_otel_service, &changed);
+        Fields.text(doc, "diagnostics.api_error_max_chars", &self.cfg_api_error_max_chars, &changed);
+
+        // Logs.
+        Fields.flag(doc, "diagnostics.log_message_receipts", self.cfg_log_receipts, false, &changed);
+        Fields.flag(doc, "diagnostics.log_message_payloads", self.cfg_log_payloads, false, &changed);
+        Fields.flag(doc, "diagnostics.token_usage_ledger_enabled", self.cfg_ledger_enabled, true, &changed);
+        Fields.text(doc, "diagnostics.token_usage_ledger_window_hours", &self.cfg_ledger_window_hours, &changed);
+        Fields.text(doc, "diagnostics.token_usage_ledger_max_bytes", &self.cfg_ledger_max_bytes, &changed);
+        Fields.text(doc, "diagnostics.token_usage_ledger_max_lines", &self.cfg_ledger_max_lines, &changed);
+
+        // Hardware.
+        Fields.flag(doc, "hardware.enabled", self.cfg_hardware_enabled, false, &changed);
+        {
+            const want = if (self.cfg_hardware_transport < hardware_transports.len) hardware_transports[self.cfg_hardware_transport] else "none";
+            const now = doc.get("hardware.transport") orelse "";
+            if (!std.mem.eql(u8, now, want)) {
+                doc.setString("hardware.transport", want) catch {};
+                changed = true;
+            }
+        }
+        Fields.text(doc, "hardware.serial_port", &self.cfg_hardware_serial_port, &changed);
+        Fields.text(doc, "hardware.baud_rate", &self.cfg_hardware_baud_rate, &changed);
+        Fields.text(doc, "hardware.probe_target", &self.cfg_hardware_probe_target, &changed);
+        Fields.flag(doc, "hardware.workspace_datasheets", self.cfg_hardware_datasheets, false, &changed);
 
         return changed;
     }

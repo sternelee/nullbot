@@ -273,6 +273,17 @@ test "screenshots" {
     w.app.openPage(.cfg_security);
     w.tester.settle(0.5);
     try shoot(&w, "10b-config-security");
+    // The last two System boards: what is written down, and the one device
+    // the agent may reach.
+    w.app.openPage(.cfg_logs);
+    w.tester.settle(0.5);
+    try shoot(&w, "10c-config-logs");
+    w.app.openPage(.hardware);
+    w.tester.settle(0.5);
+    try shoot(&w, "10d-config-hardware");
+    w.app.openPage(.cfg_advanced);
+    w.tester.settle(0.5);
+    try shoot(&w, "10e-config-advanced");
     w.tester.resize(1180, 800);
     w.app.openPage(.cfg_model);
     w.tester.settle(0.4);
